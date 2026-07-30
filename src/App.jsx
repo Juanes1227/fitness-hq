@@ -27,33 +27,33 @@ const ROUTINE = {
     label:"PIERNA (LEGS)", day:"LUNES", color:"#f59e0b", icon:"🏋️",
     note:"Descanso 2–3 min en compuestos. 90 seg en máquinas.",
     slots:[
-      {id:"l1",name:"Barbell Back Squat",    es:"Sentadilla con Barra",        sets:4,reps:"6–8",  note:"RPE 8–9",  cat:9, search:"barbell squat"},
-      {id:"l2",name:"Romanian Deadlift",     es:"Peso Muerto Rumano",          sets:4,reps:"8–10", note:"2–3 min",  cat:9, search:"romanian deadlift"},
-      {id:"l3",name:"Leg Press Machine",     es:"Prensa de Pierna",            sets:3,reps:"10–12",note:"Máquina",  cat:9, search:"leg press"},
-      {id:"l4",name:"Leg Curl Machine",      es:"Curl Femoral en Máquina",     sets:3,reps:"12–15",note:"Isquios",  cat:9, search:"leg curl"},
-      {id:"l5",name:"Standing Calf Raise",   es:"Gemelo de Pie en Máquina",    sets:4,reps:"20–25",note:"Lento",    cat:14,search:"calf raise"},
+      {id:"l1",name:"Barbell Back Squat",    es:"Sentadilla con Barra",        sets:4,reps:"6–8",  note:"RPE 8–9",  cat:9, search:"barbell squat", wger:1801},
+      {id:"l2",name:"Romanian Deadlift",     es:"Peso Muerto Rumano",          sets:4,reps:"8–10", note:"2–3 min",  cat:9, search:"romanian deadlift", wger:507},
+      {id:"l3",name:"Leg Press Machine",     es:"Prensa de Pierna",            sets:3,reps:"10–12",note:"Máquina",  cat:9, search:"leg press", wger:371},
+      {id:"l4",name:"Leg Curl Machine",      es:"Curl Femoral en Máquina",     sets:3,reps:"12–15",note:"Isquios",  cat:9, search:"leg curl", wger:364},
+      {id:"l5",name:"Standing Calf Raise",   es:"Gemelo de Pie en Máquina",    sets:4,reps:"20–25",note:"Lento",    cat:14,search:"calf raise", wger:622},
     ]
   },
   push: {
     label:"EMPUJE (PUSH)", day:"MIÉRCOLES", color:"#10b981", icon:"🏋️",
     note:"Iniciar con barra fresco. Pec Deck al final cuando ya hay fatiga.",
     slots:[
-      {id:"s1",name:"Barbell Bench Press",   es:"Press de Banca con Barra",    sets:4,reps:"6–8",  note:"RPE 8",   cat:11,search:"bench press barbell"},
-      {id:"s2",name:"Barbell Overhead Press",es:"Press Militar con Barra",     sets:4,reps:"8–10", note:"De pie",  cat:13,search:"overhead press barbell"},
-      {id:"s3",name:"Incline Dumbbell Press",es:"Press Inclinado Mancuerna",   sets:3,reps:"10–12",note:"45°",     cat:11,search:"incline dumbbell press"},
-      {id:"s4",name:"Pec Deck / Cable Fly",  es:"Pec Deck o Apertura en Cable",sets:3,reps:"12–15",note:"Máquina", cat:11,search:"pec deck"},
-      {id:"s5",name:"Tricep Pushdown Cable", es:"Extensión Tríceps en Polea",  sets:3,reps:"12–15",note:"Polea alta",cat:8,search:"tricep pushdown cable"},
+      {id:"s1",name:"Barbell Bench Press",   es:"Press de Banca con Barra",    sets:4,reps:"6–8",  note:"RPE 8",   cat:11,search:"bench press barbell", wger:73},
+      {id:"s2",name:"Barbell Overhead Press",es:"Press Militar con Barra",     sets:4,reps:"8–10", note:"De pie",  cat:13,search:"overhead press barbell", wger:1893},
+      {id:"s3",name:"Incline Dumbbell Press",es:"Press Inclinado Mancuerna",   sets:3,reps:"10–12",note:"45°",     cat:11,search:"incline dumbbell press", wger:537},
+      {id:"s4",name:"Pec Deck / Cable Fly",  es:"Pec Deck o Apertura en Cable",sets:3,reps:"12–15",note:"Máquina", cat:11,search:"pec deck", wger:1904},
+      {id:"s5",name:"Tricep Pushdown Cable", es:"Extensión Tríceps en Polea",  sets:3,reps:"12–15",note:"Polea alta",cat:8,search:"tricep pushdown cable", wger:805},
     ]
   },
   pull: {
     label:"TRACCIÓN (PULL)", day:"VIERNES", color:"#3b82f6", icon:"🏋️",
     note:"Sábado de descanso — puedes ir a fondo sin preocuparte por recuperación inmediata.",
     slots:[
-      {id:"p1",name:"Barbell Bent-Over Row", es:"Remo con Barra Inclinado",    sets:4,reps:"6–8",  note:"RPE 8–9",     cat:12,search:"barbell row bent over"},
-      {id:"p2",name:"Lat Pulldown",          es:"Polea al Pecho Agarre Abierto",sets:4,reps:"10–12",note:"Cable",       cat:12,search:"lat pulldown"},
-      {id:"p3",name:"Seated Cable Row",      es:"Remo en Polea Sentado",       sets:3,reps:"10–12",note:"Agarre neutro",cat:12,search:"seated cable row"},
-      {id:"p4",name:"Face Pull Cable",       es:"Face Pull en Cable",          sets:3,reps:"15–20",note:"Rot. externa", cat:13,search:"face pull cable"},
-      {id:"p5",name:"EZ Bar Biceps Curl",    es:"Curl con Barra EZ",           sets:3,reps:"10–12",note:"Control exc.", cat:8, search:"bicep curl ez bar"},
+      {id:"p1",name:"Barbell Bent-Over Row", es:"Remo con Barra Inclinado",    sets:4,reps:"6–8",  note:"RPE 8–9",     cat:12,search:"barbell row bent over", wger:83},
+      {id:"p2",name:"Lat Pulldown",          es:"Polea al Pecho Agarre Abierto",sets:4,reps:"10–12",note:"Cable",       cat:12,search:"lat pulldown", wger:1125},
+      {id:"p3",name:"Seated Cable Row",      es:"Remo en Polea Sentado",       sets:3,reps:"10–12",note:"Agarre neutro",cat:12,search:"seated cable row", wger:1117},
+      {id:"p4",name:"Face Pull Cable",       es:"Face Pull en Cable",          sets:3,reps:"15–20",note:"Rot. externa", cat:13,search:"face pull cable", wger:222},
+      {id:"p5",name:"EZ Bar Biceps Curl",    es:"Curl con Barra EZ",           sets:3,reps:"10–12",note:"Control exc.", cat:8, search:"bicep curl ez bar", wger:91},
     ]
   },
 };
@@ -492,8 +492,8 @@ function ExCard({slot,override,color,onSwap,onDetail}) {
       </div>
       <div style={{display:"flex",flexDirection:"column",gap:3,flexShrink:0}}>
         <button onClick={()=>onSwap(slot)} style={{background:"none",border:`1px solid ${color}44`,borderRadius:5,color:color+"cc",fontSize:8,fontWeight:700,padding:"3px 6px",cursor:"pointer",textTransform:"uppercase"}}>SWAP</button>
-        {/* Pasa slot.id para que INFO funcione incluso sin ID de wger */}
-        <button onClick={()=>onDetail(slot.id, override?.id??null, name)} style={{background:"none",border:`1px solid ${T.border}`,borderRadius:5,color:T.muted,fontSize:8,fontWeight:700,padding:"3px 6px",cursor:"pointer",textTransform:"uppercase"}}>INFO</button>
+        {/* Sin override usa el ID de wger verificado del slot, para traer imágenes/video reales */}
+        <button onClick={()=>onDetail(slot.id, override?.id??slot.wger??null, name)} style={{background:"none",border:`1px solid ${T.border}`,borderRadius:5,color:T.muted,fontSize:8,fontWeight:700,padding:"3px 6px",cursor:"pointer",textTransform:"uppercase"}}>INFO</button>
       </div>
     </div>
   );
