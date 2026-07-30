@@ -68,6 +68,85 @@ const SCHEDULE = [
   {lbl:"Dom",icon:"🚴",key:"ride", title:"CICLISMO", sub:">50km Road",              color:"#f59e0b"},
 ];
 
+// ── Embedded exercise info (sin dependencia de API) ───────────────────────────
+const EX_DB = {
+  l1:{muscles:["Cuádriceps","Glúteos","Isquiotibiales"],sec:["Core","Gemelos","Lumbares"],equip:["Barra","Rack"],
+      desc:"El ejercicio rey del tren inferior. Barra alta o baja sobre los trapecios. Desciende hasta muslos paralelos (o más abajo). Rodillas alineadas con los pies, torso erguido y core apretado."},
+  l2:{muscles:["Isquiotibiales","Glúteos"],sec:["Lumbares","Cuádriceps"],equip:["Barra"],
+      desc:"Empuja las caderas hacia atrás deslizando la barra por las piernas. Mantén la espalda neutra. Baja hasta sentir tensión en los isquios, sin perder la lordosis lumbar. No es un peso muerto convencional."},
+  l3:{muscles:["Cuádriceps","Glúteos"],sec:["Isquiotibiales"],equip:["Máquina prensa"],
+      desc:"Pies a la anchura de hombros en la plataforma. Desciende lento y empuja de talones. Posición alta de pies = más glúteo; posición baja = más cuádriceps. Rodillas sin bloquear arriba."},
+  l4:{muscles:["Isquiotibiales"],sec:["Gemelos"],equip:["Máquina curl femoral"],
+      desc:"Boca abajo, lleva los talones hacia los glúteos. Controla el excéntrico (3 seg de bajada). Evita levantar las caderas del banco. El eje de la máquina debe coincidir con la articulación de la rodilla."},
+  l5:{muscles:["Gemelos (gastrocnemio)"],sec:["Sóleo"],equip:["Máquina de gemelos de pie"],
+      desc:"Sube en puntas hasta máxima extensión del tobillo, aguanta 1 seg y baja lento hasta el estiramiento completo. La cadencia lenta (2-1-3) es clave. El gastrocnemio trabaja mejor con rodilla extendida."},
+  s1:{muscles:["Pectoral mayor"],sec:["Tríceps","Deltoides anterior"],equip:["Barra","Banco plano"],
+      desc:"Agarre ligeramente más ancho que los hombros. Baja la barra tocando el esternón medio, codos a ~75° del torso. Escápulas retraídas y deprimidas durante todo el recorrido. Empuje explosivo arriba."},
+  s2:{muscles:["Deltoides (anterior y medio)"],sec:["Tríceps","Trapecio"],equip:["Barra"],
+      desc:"Press militar de pie. Desde clavículas, empuja la barra verticalmente sobre la cabeza. Activa el core para evitar la hiperextensión lumbar. Glúteos apretados. Codos ligeramente adelantados al bajar."},
+  s3:{muscles:["Pectoral superior (clavicular)"],sec:["Deltoides anterior","Tríceps"],equip:["Mancuernas","Banco 30–45°"],
+      desc:"El banco a 30–45° maximiza la porción clavicular del pecho. Baja hasta que las mancuernas queden a la altura del pecho. Empuja en arco convergente. Evita ángulos mayores a 45° (activa más hombro)."},
+  s4:{muscles:["Pectoral (aislamiento)"],sec:["Deltoides anterior"],equip:["Máquina pec deck o polea"],
+      desc:"Mantén codos ligeramente flexionados. El movimiento es de aducción horizontal. Ideal al final del entrenamiento con el pecho ya fatigado. No atrases los codos más allá de los hombros para proteger la articulación."},
+  s5:{muscles:["Tríceps"],sec:["Deltoides posterior"],equip:["Polea alta","Cuerda"],
+      desc:"Con cuerda: separa las puntas al final del movimiento para mayor activación del tríceps lateral. Codos fijos al costado en todo momento. Extiende completamente en el punto de contracción máxima."},
+  p1:{muscles:["Dorsal ancho","Romboides","Trapecio medio"],sec:["Bíceps","Deltoides posterior"],equip:["Barra"],
+      desc:"Inclinación del torso ~45°. Agarre prono más ancho que los hombros. Tira la barra hacia el ombligo, no hacia el pecho. Aprieta la escápula en la contracción. El ejercicio de mayor activación del dorsal con carga libre."},
+  p2:{muscles:["Dorsal ancho"],sec:["Bíceps","Romboides"],equip:["Polea alta"],
+      desc:"Agarre prono abierto. Tira la barra hacia el esternón llevando los codos hacia las caderas. Pecho ligeramente elevado. Controla el excéntrico completo para maximizar el estiramiento del dorsal."},
+  p3:{muscles:["Dorsal ancho","Romboides"],sec:["Bíceps","Infraespinoso"],equip:["Polea baja","Agarre neutro"],
+      desc:"Agarre neutro (palmas enfrentadas), tira hacia el abdomen bajo. Aprieta las escápulas al final del movimiento. Espalda baja fija contra el pad de apoyo. Evita el balanceo del torso."},
+  p4:{muscles:["Deltoides posterior","Manguito rotador"],sec:["Trapecio","Romboides"],equip:["Polea media","Cuerda"],
+      desc:"Pulgares apuntando arriba, codos a 90°. Tira hacia la cara separando los brazos (rotación externa). Fundamental para salud del hombro y desarrollo del deltoides posterior. Peso ligero, técnica perfecta."},
+  p5:{muscles:["Bíceps braquial"],sec:["Braquial","Braquiorradial"],equip:["Barra EZ"],
+      desc:"La barra EZ reduce el estrés en la muñeca y el codo. Codos fijos al costado durante todo el recorrido. Controla el excéntrico (3 seg) para máxima hipertrofia. Evita el balanceo del torso."},
+};
+
+// ── Alternativas pre-cargadas por grupo ───────────────────────────────────────
+const ALTS_DB = {
+  legs:[
+    {id:"la1",name:"Hack Squat Machine",       es:"Sentadilla en Hack"},
+    {id:"la2",name:"Bulgarian Split Squat",     es:"Sentadilla Búlgara"},
+    {id:"la3",name:"Sumo Deadlift",             es:"Peso Muerto Sumo"},
+    {id:"la4",name:"Hip Thrust",                es:"Empuje de Cadera (Hip Thrust)"},
+    {id:"la5",name:"Leg Extension Machine",     es:"Extensión de Cuádriceps"},
+    {id:"la6",name:"Nordic Curl",               es:"Curl Nórdico"},
+    {id:"la7",name:"Good Morning",              es:"Buenos Días con Barra"},
+    {id:"la8",name:"Seated Calf Raise",         es:"Gemelo Sentado"},
+    {id:"la9",name:"Goblet Squat",              es:"Sentadilla Goblet"},
+    {id:"la10",name:"Step-Up",                  es:"Subida al Banco"},
+  ],
+  push:[
+    {id:"pa1",name:"Dumbbell Bench Press",      es:"Press de Banca con Mancuernas"},
+    {id:"pa2",name:"Chest Dips",                es:"Fondos en Paralelas (Pecho)"},
+    {id:"pa3",name:"Arnold Press",              es:"Press Arnold"},
+    {id:"pa4",name:"Dumbbell Lateral Raise",    es:"Elevaciones Laterales"},
+    {id:"pa5",name:"Skull Crushers EZ",         es:"Rompecráneos con Barra EZ"},
+    {id:"pa6",name:"Close-Grip Bench Press",    es:"Press Banca Agarre Cerrado"},
+    {id:"pa7",name:"Cable Chest Fly",           es:"Apertura en Polea"},
+    {id:"pa8",name:"Landmine Press",            es:"Press Landmine"},
+    {id:"pa9",name:"Overhead Tricep Extension", es:"Extensión de Tríceps Sobre la Cabeza"},
+    {id:"pa10",name:"Push-up",                  es:"Flexiones / Lagartija"},
+  ],
+  pull:[
+    {id:"ra1",name:"T-Bar Row",                 es:"Remo en T"},
+    {id:"ra2",name:"Pull-up / Chin-up",         es:"Dominadas"},
+    {id:"ra3",name:"Dumbbell Row",              es:"Remo con Mancuerna"},
+    {id:"ra4",name:"Cable Pullover",            es:"Pullover en Polea"},
+    {id:"ra5",name:"Rear Delt Fly Machine",     es:"Aperturas Traseras en Máquina"},
+    {id:"ra6",name:"Hammer Curl",               es:"Curl Martillo"},
+    {id:"ra7",name:"Preacher Curl",             es:"Curl en Predicador"},
+    {id:"ra8",name:"Meadows Row",               es:"Remo Meadows"},
+    {id:"ra9",name:"Incline Dumbbell Curl",     es:"Curl con Mancuernas Inclinado"},
+    {id:"ra10",name:"Straight-Arm Pulldown",    es:"Extensión de Brazos en Polea"},
+  ],
+};
+const SLOT_GROUP = {
+  l1:"legs",l2:"legs",l3:"legs",l4:"legs",l5:"legs",
+  s1:"push",s2:"push",s3:"push",s4:"push",s5:"push",
+  p1:"pull",p2:"pull",p3:"pull",p4:"pull",p5:"pull",
+};
+
 // ── Date helpers ──────────────────────────────────────────────────────────────
 const toKey  = d => d.toISOString().slice(0,10);
 const today  = () => new Date();
@@ -259,46 +338,64 @@ function WeekNav({selDate, onSelect}) {
 }
 const btnStyle={background:"none",border:`1px solid ${T.border}`,borderRadius:6,padding:"3px 10px",color:T.muted,cursor:"pointer",fontSize:16,lineHeight:1};
 
-// ── wger Drawer ───────────────────────────────────────────────────────────────
-function WgerDrawer({exId,exName,color,onClose}) {
-  const [info,setInfo]=useState(null);
-  const [loading,setLoading]=useState(true);
-  useEffect(()=>{ if(!exId){setLoading(false);return;} wgerInfo(exId).then(d=>{setInfo(d);setLoading(false);}); },[exId]);
+// ── Info Drawer ───────────────────────────────────────────────────────────────
+function WgerDrawer({slotId, exId, exName, color, onClose}) {
+  const embedded = EX_DB[slotId] || null;
+  const [wger, setWger] = useState(null);
+
+  // Solo intenta wger si hay un ID real de ejercicio wger (no un ID de alternativa local)
+  useEffect(() => {
+    if (!exId || typeof exId === "string") return;
+    wgerInfo(exId).then(d => setWger(d));
+  }, [exId]);
+
+  // Fusiona: embedded es la base, wger complementa si está disponible
+  const muscles     = wger?.muscles?.length     ? wger.muscles     : embedded?.muscles    || [];
+  const secondary   = wger?.musclesSecondary?.length ? wger.musclesSecondary : embedded?.sec || [];
+  const equip       = wger?.equipment?.length   ? wger.equipment   : embedded?.equip      || [];
+  const desc        = wger?.description || embedded?.desc || "";
+  const images      = wger?.images || [];
+  const hasData     = embedded || wger;
+
   return (
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.8)",zIndex:300,display:"flex",alignItems:"flex-end"}} onClick={onClose}>
-      <div style={{background:T.surface,border:`1px solid ${color}44`,borderRadius:"14px 14px 0 0",width:"100%",maxHeight:"70vh",overflow:"auto",padding:18}} onClick={e=>e.stopPropagation()}>
+      <div style={{background:T.surface,border:`1px solid ${color}44`,borderRadius:"14px 14px 0 0",width:"100%",maxHeight:"72vh",overflow:"auto",padding:18}} onClick={e=>e.stopPropagation()}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
           <div>
-            <div style={{fontSize:9,fontWeight:700,letterSpacing:2,color,textTransform:"uppercase",marginBottom:2}}>wger.de · Base de Datos de Ejercicios</div>
+            <div style={{fontSize:9,fontWeight:700,letterSpacing:2,color,textTransform:"uppercase",marginBottom:2}}>
+              {wger ? "wger.de + datos locales" : embedded ? "Datos locales" : "Información"}
+            </div>
             <div style={{fontFamily:"Impact,sans-serif",fontSize:18,color:"#fff"}}>{exName}</div>
           </div>
           <button onClick={onClose} style={{background:"none",border:"none",color:T.muted,fontSize:20,cursor:"pointer"}}>✕</button>
         </div>
-        {loading&&<div style={{textAlign:"center",padding:"20px 0",color:T.muted,fontSize:11}}>Cargando desde wger.de…</div>}
-        {info&&(
+        {!hasData && (
+          <div style={{textAlign:"center",padding:"20px 0",color:T.muted,fontSize:11}}>
+            Sin datos disponibles para este ejercicio.
+          </div>
+        )}
+        {hasData && (
           <>
-            {info.images.length>0&&(
+            {images.length > 0 && (
               <div style={{display:"flex",gap:8,marginBottom:14,overflow:"auto"}}>
-                {info.images.slice(0,3).map((img,i)=>(
-                  <img key={i} src={img} alt={info.name} style={{height:100,borderRadius:8,border:`1px solid ${T.border}`,objectFit:"cover"}} onError={e=>e.target.style.display="none"}/>
+                {images.slice(0,3).map((img,i) => (
+                  <img key={i} src={img} alt={exName} style={{height:100,borderRadius:8,border:`1px solid ${T.border}`,objectFit:"cover"}} onError={e=>e.target.style.display="none"}/>
                 ))}
               </div>
             )}
             <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:12}}>
-              {info.category&&<Pill c={color}>{info.category}</Pill>}
-              {info.equipment.map(e=><Pill key={e} c={T.purple}>{e}</Pill>)}
-              {info.muscles.map(m=><Pill key={m} c={T.blue}>{m}</Pill>)}
-              {info.musclesSecondary.map(m=><Pill key={m} c={T.muted} sm>{m}</Pill>)}
+              {equip.map(e  => <Pill key={e} c={T.purple}>{e}</Pill>)}
+              {muscles.map(m => <Pill key={m} c={T.blue}>{m}</Pill>)}
+              {secondary.map(m => <Pill key={m} c={T.muted} sm>{m}</Pill>)}
             </div>
-            {info.description&&(
+            {desc && (
               <div style={{background:T.card,borderRadius:8,padding:12,border:`1px solid ${T.border}`}}>
-                <div style={{fontSize:9,fontWeight:700,letterSpacing:2,color:T.muted,marginBottom:6}}>INSTRUCCIONES</div>
-                <div style={{fontSize:11,color:T.white,lineHeight:1.7}}>{info.description}</div>
+                <div style={{fontSize:9,fontWeight:700,letterSpacing:2,color:T.muted,marginBottom:6}}>EJECUCIÓN</div>
+                <div style={{fontSize:11,color:T.white,lineHeight:1.75}}>{desc}</div>
               </div>
             )}
           </>
         )}
-        {!info&&!loading&&<div style={{textAlign:"center",padding:"16px 0",color:T.muted,fontSize:11}}>Sin datos en wger para este ejercicio.</div>}
       </div>
     </div>
   );
@@ -306,38 +403,58 @@ function WgerDrawer({exId,exName,color,onClose}) {
 
 // ── Swap Drawer ───────────────────────────────────────────────────────────────
 function SwapDrawer({slot,color,onSwap,onClose}) {
-  const [results,setResults]=useState([]);
-  const [loading,setLoading]=useState(true);
-  const [q,setQ]=useState(slot.search||slot.name);
-  const doSearch=async(term)=>{ setLoading(true); const r=await wgerSearch(term); setResults(r); setLoading(false); };
-  useEffect(()=>{ doSearch(q); },[]);
+  const preloaded = ALTS_DB[SLOT_GROUP[slot.id]] || [];
+  const [results, setResults] = useState(preloaded);   // carga instantánea
+  const [wgerResults, setWgerResults] = useState([]);
+  const [searching, setSearching] = useState(false);
+  const [q, setQ] = useState(slot.search || slot.name);
+
+  const doSearch = async (term) => {
+    setSearching(true);
+    const r = await wgerSearch(term);
+    setWgerResults(r);
+    setSearching(false);
+  };
+
+  // Muestra primero los pre-cargados; los de wger se añaden al buscar
+  const allResults = [
+    ...results,
+    ...wgerResults.filter(w => !results.some(r => r.name === w.name)),
+  ];
+
   return (
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.8)",zIndex:200,display:"flex",justifyContent:"flex-end"}} onClick={onClose}>
       <div style={{background:T.surface,border:`1px solid ${color}33`,borderRadius:"14px 0 0 14px",width:"min(380px,94vw)",height:"100%",overflow:"auto",padding:16,display:"flex",flexDirection:"column",gap:8}} onClick={e=>e.stopPropagation()}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
           <div>
-            <div style={{fontSize:9,fontWeight:700,letterSpacing:2,color,textTransform:"uppercase"}}>ALTERNATIVAS · wger.de</div>
+            <div style={{fontSize:9,fontWeight:700,letterSpacing:2,color,textTransform:"uppercase"}}>ALTERNATIVAS</div>
             <div style={{fontFamily:"Impact,sans-serif",fontSize:15,color:"#fff"}}>{slot.name}</div>
           </div>
           <button onClick={onClose} style={{background:"none",border:"none",color:T.muted,fontSize:18,cursor:"pointer"}}>✕</button>
         </div>
+        {/* Búsqueda wger como complemento opcional */}
         <div style={{display:"flex",gap:6}}>
           <input value={q} onChange={e=>setQ(e.target.value)} onKeyDown={e=>e.key==="Enter"&&doSearch(q)}
+            placeholder="Buscar más en wger.de…"
             style={{flex:1,background:T.card,border:`1px solid ${T.border}`,borderRadius:6,padding:"7px 10px",color:T.white,fontSize:11,outline:"none",fontFamily:T.font}}/>
-          <button onClick={()=>doSearch(q)} style={{background:color+"22",border:`1px solid ${color}44`,borderRadius:6,padding:"7px 12px",color,fontSize:11,cursor:"pointer",fontWeight:700}}>🔍</button>
+          <button onClick={()=>doSearch(q)} style={{background:color+"22",border:`1px solid ${color}44`,borderRadius:6,padding:"7px 12px",color,fontSize:11,cursor:"pointer",fontWeight:700}}>
+            {searching?"…":"🔍"}
+          </button>
         </div>
-        {loading&&<div style={{textAlign:"center",padding:"16px 0",color:T.muted,fontSize:11}}>Buscando en wger.de…</div>}
         <div style={{display:"flex",flexDirection:"column",gap:5,flex:1,overflow:"auto"}}>
-          {results.map(ex=>(
+          {allResults.map(ex => (
             <div key={ex.id} style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 10px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
               <div>
                 <div style={{fontSize:11,fontWeight:700,color:"#fff",marginBottom:3}}>{ex.name}</div>
-                <Pill c={T.cyan} sm>wger #{ex.id}</Pill>
+                <div style={{fontSize:9,fontStyle:"italic",color:T.muted,marginBottom:2}}>{ex.es||""}</div>
+                <Pill c={typeof ex.id==="number"?T.cyan:color} sm>
+                  {typeof ex.id==="number"?`wger #${ex.id}`:"rutina"}
+                </Pill>
               </div>
-              <button onClick={()=>onSwap(slot.id,ex)} style={{background:color+"22",border:`1px solid ${color}44`,borderRadius:6,color,fontSize:9,fontWeight:700,padding:"4px 8px",cursor:"pointer",textTransform:"uppercase",marginLeft:6}}>USAR</button>
+              <button onClick={()=>onSwap(slot.id, ex)} style={{background:color+"22",border:`1px solid ${color}44`,borderRadius:6,color,fontSize:9,fontWeight:700,padding:"4px 8px",cursor:"pointer",textTransform:"uppercase",marginLeft:6}}>USAR</button>
             </div>
           ))}
-          {!loading&&results.length===0&&<div style={{textAlign:"center",padding:"20px 0",color:T.muted,fontSize:11}}>Sin resultados. Prueba otro término.</div>}
+          {allResults.length===0&&<div style={{textAlign:"center",padding:"20px 0",color:T.muted,fontSize:11}}>Sin alternativas disponibles.</div>}
         </div>
       </div>
     </div>
@@ -357,15 +474,16 @@ function ExCard({slot,override,color,onSwap,onDetail}) {
       </div>
       <div style={{flex:1,minWidth:0}}>
         <div style={{fontSize:12,fontWeight:700,color:"#fff",lineHeight:1.2,marginBottom:3}}>{name}</div>
-        <div style={{fontSize:9,fontStyle:"italic",color:T.muted,marginBottom:4}}>{override?`alternativa wger #${override.id}`:slot.es}</div>
+        <div style={{fontSize:9,fontStyle:"italic",color:T.muted,marginBottom:4}}>{override?.es||override?.name&&`alt: ${override.name}`||slot.es}</div>
         <div style={{display:"flex",gap:3,flexWrap:"wrap"}}>
           <Pill c={color} sm>{slot.note}</Pill>
-          {override&&<Pill c={T.cyan} sm>wger</Pill>}
+          {override&&<Pill c={T.cyan} sm>cambiado</Pill>}
         </div>
       </div>
       <div style={{display:"flex",flexDirection:"column",gap:3,flexShrink:0}}>
         <button onClick={()=>onSwap(slot)} style={{background:"none",border:`1px solid ${color}44`,borderRadius:5,color:color+"cc",fontSize:8,fontWeight:700,padding:"3px 6px",cursor:"pointer",textTransform:"uppercase"}}>SWAP</button>
-        <button onClick={()=>onDetail(override?.id||null,name)} style={{background:"none",border:`1px solid ${T.border}`,borderRadius:5,color:T.muted,fontSize:8,fontWeight:700,padding:"3px 6px",cursor:"pointer",textTransform:"uppercase"}}>INFO</button>
+        {/* Pasa slot.id para que INFO funcione incluso sin ID de wger */}
+        <button onClick={()=>onDetail(slot.id, override?.id??null, name)} style={{background:"none",border:`1px solid ${T.border}`,borderRadius:5,color:T.muted,fontSize:8,fontWeight:700,padding:"3px 6px",cursor:"pointer",textTransform:"uppercase"}}>INFO</button>
       </div>
     </div>
   );
@@ -438,17 +556,23 @@ function WorkoutModule() {
   const [selDate,setSelDate]=useState(today());
   const [swaps,setSwaps]=useState({});
   const [swapTarget,setSwapTarget]=useState(null);
+  const [detailSlotId,setDetailSlotId]=useState(null);
   const [detailId,setDetailId]=useState(null);
   const [detailName,setDetailName]=useState("");
   const sched=SCHEDULE[dow(selDate)];
   function handleSwap(slot){setSwapTarget({slot,color:sched.color});}
   function applySwap(slotId,ex){setSwaps(s=>({...s,[slotId]:ex}));setSwapTarget(null);}
+  function openDetail(slotId, wgerId, name){setDetailSlotId(slotId);setDetailId(wgerId);setDetailName(name);}
+  function closeDetail(){setDetailSlotId(null);setDetailId(null);}
   return (
     <div>
       <WeekNav selDate={selDate} onSelect={setSelDate}/>
-      <DayContent dayKey={sched.key} swaps={swaps} onSwap={handleSwap} onDetail={(id,name)=>{setDetailId(id);setDetailName(name);}} color={sched.color}/>
+      <DayContent dayKey={sched.key} swaps={swaps} onSwap={handleSwap} onDetail={openDetail} color={sched.color}/>
       {swapTarget&&<SwapDrawer slot={swapTarget.slot} color={swapTarget.color} onSwap={applySwap} onClose={()=>setSwapTarget(null)}/>}
-      {detailId&&<WgerDrawer exId={detailId} exName={detailName} color={sched.color} onClose={()=>setDetailId(null)}/>}
+      {/* Abre siempre que haya slotId (datos locales) o exId (wger) */}
+      {(detailSlotId||detailId)&&(
+        <WgerDrawer slotId={detailSlotId} exId={detailId} exName={detailName} color={sched.color} onClose={closeDetail}/>
+      )}
     </div>
   );
 }
