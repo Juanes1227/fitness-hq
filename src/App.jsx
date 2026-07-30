@@ -9,7 +9,36 @@ const T = {
   mono:"monospace",
 };
 
-const TARGETS = { kcal:2600, protein:175, carbs:280, fat:75 };
+// ── Perfil y objetivos dinámicos (TDEE · Mifflin-St Jeor) ─────────────────────
+const ACTIVITY = [
+  {v:1.2,  l:"Sedentario"},
+  {v:1.375,l:"Ligero (1–3 d/sem)"},
+  {v:1.55, l:"Moderado (3–5 d/sem)"},
+  {v:1.725,l:"Activo (6–7 d/sem)"},
+  {v:1.9,  l:"Muy activo (2x/día)"},
+];
+const GOALS = [
+  {v:"cut",     l:"Déficit — bajar grasa",     pct:-0.20, protPerKg:2.2},
+  {v:"maintain",l:"Mantener",                  pct:0,     protPerKg:2.0},
+  {v:"bulk",    l:"Superávit — ganar músculo", pct:0.10,  protPerKg:1.8},
+];
+const DEFAULT_PROFILE = { weight:88.7, height:175, age:30, sex:"M", activity:1.55, goal:"cut" };
+
+function bmr({weight,height,age,sex}) {
+  const base = 10*weight + 6.25*height - 5*age;
+  return sex==="F" ? base-161 : base+5;
+}
+function computeTargets(profile) {
+  const p = {...DEFAULT_PROFILE, ...profile};
+  const goal = GOALS.find(g=>g.v===p.goal) || GOALS[0];
+  const tdee = bmr(p) * p.activity;
+  const kcal = Math.round(tdee * (1+goal.pct));
+  const protein = Math.round(p.weight * goal.protPerKg);
+  const fat = Math.round((kcal*0.25)/9);
+  const carbs = Math.max(0, Math.round((kcal - protein*4 - fat*9)/4));
+  return { kcal, protein, carbs, fat, tdee:Math.round(tdee) };
+}
+
 const MEAL_TYPES = [
   {id:"breakfast",l:"Desayuno",icon:"🌅"},
   {id:"lunch",    l:"Almuerzo",icon:"☀️"},
@@ -18,7 +47,7 @@ const MEAL_TYPES = [
 ];
 
 const WGER   = "https://wger.de/api/v2";
-const USDA_K = "DEMO_KEY";
+const USDA_K = "9jnbDXJZhLchDe2FhBxcHTDnq4B0naMN5J5mop2s";
 const USDA   = "https://api.nal.usda.gov/fdc/v1/foods/search";
 const OFF    = "https://world.openfoodfacts.org/cgi/search.pl";
 
@@ -155,6 +184,7 @@ const sameDay= (a,b) => toKey(a)===toKey(b);
 const dow    = d => (d.getDay()+6)%7;
 const weekOf = d => { const m=addDays(d,-dow(d)); return Array.from({length:7},(_,i)=>addDays(m,i)); };
 const fmt    = d => d.toLocaleDateString("es-CO",{day:"2-digit",month:"short"});
+const repsRange = str => { const n=(str.match(/\d+/g)||[]).map(Number); return {lo:n[0]||0,hi:n[n.length-1]||n[0]||0}; };
 
 // ── Storage (localStorage) ────────────────────────────────────────────────────
 const store = {
@@ -165,6 +195,55 @@ const store = {
     try { localStorage.setItem(k,JSON.stringify(v)); } catch {}
   },
 };
+
+// ── Backup manual (export/import de todo localStorage) ────────────────────────
+function exportBackup() {
+  const dump = {};
+  for (let i=0;i<localStorage.length;i++) {
+    const k = localStorage.key(i);
+    try { dump[k] = JSON.parse(localStorage.getItem(k)); } catch { dump[k] = localStorage.getItem(k); }
+  }
+  const blob = new Blob([JSON.stringify(dump,null,2)], {type:"application/json"});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = `fitness-hq-backup-${toKey(today())}.json`;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+}
+function importBackup(file, onDone) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const dump = JSON.parse(reader.result);
+      Object.entries(dump).forEach(([k,v]) => localStorage.setItem(k, typeof v==="string"?v:JSON.stringify(v)));
+      onDone?.(true);
+    } catch { onDone?.(false); }
+  };
+  reader.readAsText(file);
+}
+
+// ── Log de ejercicio ejecutado (sobrecarga progresiva) ─────────────────────────
+const logKey = name => `exlog:${name}`;
+async function loadExLog(name) { return (await store.get(logKey(name))) || []; }
+async function saveExLog(name, sets) {
+  const hist = await loadExLog(name);
+  const entry = { date: toKey(today()), sets };
+  const updated = [...hist.filter(h=>h.date!==entry.date), entry].sort((a,b)=>a.date.localeCompare(b.date));
+  await store.set(logKey(name), updated);
+  return updated;
+}
+function suggestProgression(last, repRange) {
+  if (!last) return null;
+  const { hi, lo } = repRange;
+  const reps = last.sets.map(s=>s.reps).filter(r=>r!=null);
+  if (!reps.length) return null;
+  const w = Math.max(...last.sets.map(s=>s.weight||0));
+  const allTop = reps.every(r=>r>=hi);
+  const anyBelow = reps.some(r=>r<lo);
+  if (allTop)   return { txt:`Sube a ${w?Math.round((w+2.5)*10)/10:"+"}kg — todas las series llegaron al tope`, c:T.green };
+  if (anyBelow) return { txt:`Mantén ${w}kg — al menos una serie no llegó al mínimo`, c:T.amber };
+  return { txt:`Repite ${w}kg, busca 1 rep más por serie`, c:T.blue };
+}
 
 // ── wger API ──────────────────────────────────────────────────────────────────
 // wger renombró/eliminó los endpoints antiguos (/exercisesearch/, /exercisetranslation/
@@ -472,28 +551,94 @@ function SwapDrawer({slot,color,onSwap,onClose}) {
 }
 
 // ── Exercise Card ─────────────────────────────────────────────────────────────
-function ExCard({slot,override,color,onSwap,onDetail}) {
+function ExCard({slot,override,color,onSwap,onDetail,onLog,logVersion}) {
   const name=override?.name||slot.name;
+  const [last,setLast]=useState(null);
+  useEffect(()=>{ let alive=true; loadExLog(name).then(h=>{ if(alive) setLast(h[h.length-1]||null); }); return ()=>{alive=false}; },[name,logVersion]);
+  const suggestion = suggestProgression(last, repsRange(slot.reps));
   return (
-    <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 10px",display:"flex",gap:8,alignItems:"center",position:"relative",overflow:"hidden"}}>
+    <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 10px",display:"flex",flexDirection:"column",gap:6,position:"relative",overflow:"hidden"}}>
       <div style={{position:"absolute",left:0,top:0,bottom:0,width:3,background:color}}/>
-      <div style={{background:color+"11",border:`1px solid ${color}33`,borderRadius:7,padding:"6px 8px",textAlign:"center",flexShrink:0,minWidth:48}}>
-        <div style={{fontFamily:T.mono,fontSize:13,fontWeight:700,color,lineHeight:1}}>{slot.sets}</div>
-        <div style={{fontSize:7,color:T.muted,letterSpacing:1}}>SERIES</div>
-        <div style={{fontSize:9,fontWeight:700,color:T.white,marginTop:2}}>{slot.reps}</div>
-      </div>
-      <div style={{flex:1,minWidth:0}}>
-        <div style={{fontSize:12,fontWeight:700,color:"#fff",lineHeight:1.2,marginBottom:3}}>{name}</div>
-        <div style={{fontSize:9,fontStyle:"italic",color:T.muted,marginBottom:4}}>{override?.es||override?.name&&`alt: ${override.name}`||slot.es}</div>
-        <div style={{display:"flex",gap:3,flexWrap:"wrap"}}>
-          <Pill c={color} sm>{slot.note}</Pill>
-          {override&&<Pill c={T.cyan} sm>cambiado</Pill>}
+      <div style={{display:"flex",gap:8,alignItems:"center"}}>
+        <div style={{background:color+"11",border:`1px solid ${color}33`,borderRadius:7,padding:"6px 8px",textAlign:"center",flexShrink:0,minWidth:48}}>
+          <div style={{fontFamily:T.mono,fontSize:13,fontWeight:700,color,lineHeight:1}}>{slot.sets}</div>
+          <div style={{fontSize:7,color:T.muted,letterSpacing:1}}>SERIES</div>
+          <div style={{fontSize:9,fontWeight:700,color:T.white,marginTop:2}}>{slot.reps}</div>
+        </div>
+        <div style={{flex:1,minWidth:0}}>
+          <div style={{fontSize:12,fontWeight:700,color:"#fff",lineHeight:1.2,marginBottom:3}}>{name}</div>
+          <div style={{fontSize:9,fontStyle:"italic",color:T.muted,marginBottom:4}}>{override?.es||override?.name&&`alt: ${override.name}`||slot.es}</div>
+          <div style={{display:"flex",gap:3,flexWrap:"wrap"}}>
+            <Pill c={color} sm>{slot.note}</Pill>
+            {override&&<Pill c={T.cyan} sm>cambiado</Pill>}
+            {last&&<Pill c={T.muted} sm>última: {last.sets.map(s=>`${s.weight}×${s.reps}`).join(" ")}</Pill>}
+          </div>
+        </div>
+        <div style={{display:"flex",flexDirection:"column",gap:3,flexShrink:0}}>
+          <button onClick={()=>onSwap(slot)} style={{background:"none",border:`1px solid ${color}44`,borderRadius:5,color:color+"cc",fontSize:8,fontWeight:700,padding:"3px 6px",cursor:"pointer",textTransform:"uppercase"}}>SWAP</button>
+          {/* Sin override usa el ID de wger verificado del slot, para traer imágenes/video reales */}
+          <button onClick={()=>onDetail(slot.id, override?.id??slot.wger??null, name)} style={{background:"none",border:`1px solid ${T.border}`,borderRadius:5,color:T.muted,fontSize:8,fontWeight:700,padding:"3px 6px",cursor:"pointer",textTransform:"uppercase"}}>INFO</button>
         </div>
       </div>
-      <div style={{display:"flex",flexDirection:"column",gap:3,flexShrink:0}}>
-        <button onClick={()=>onSwap(slot)} style={{background:"none",border:`1px solid ${color}44`,borderRadius:5,color:color+"cc",fontSize:8,fontWeight:700,padding:"3px 6px",cursor:"pointer",textTransform:"uppercase"}}>SWAP</button>
-        {/* Sin override usa el ID de wger verificado del slot, para traer imágenes/video reales */}
-        <button onClick={()=>onDetail(slot.id, override?.id??slot.wger??null, name)} style={{background:"none",border:`1px solid ${T.border}`,borderRadius:5,color:T.muted,fontSize:8,fontWeight:700,padding:"3px 6px",cursor:"pointer",textTransform:"uppercase"}}>INFO</button>
+      <button onClick={()=>onLog(slot,override)} style={{background:T.blue+"15",border:`1px solid ${T.blue}44`,borderRadius:6,padding:"6px 0",color:T.blue,fontSize:9,fontWeight:700,letterSpacing:1,textTransform:"uppercase",cursor:"pointer"}}>
+        📝 Registrar series
+      </button>
+      {suggestion&&(
+        <div style={{fontSize:9,color:suggestion.c,background:suggestion.c+"11",border:`1px solid ${suggestion.c}33`,borderRadius:6,padding:"5px 8px"}}>
+          💡 {suggestion.txt}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Log Drawer (registrar series ejecutadas) ───────────────────────────────────
+function LogDrawer({slot,override,color,onClose,onSaved}) {
+  const name=override?.name||slot.name;
+  const [rows,setRows]=useState(()=>Array.from({length:slot.sets},()=>({weight:"",reps:"",rpe:""})));
+  const [loaded,setLoaded]=useState(false);
+  useEffect(()=>{
+    loadExLog(name).then(h=>{
+      const prev=h[h.length-1];
+      if(prev?.sets?.length) setRows(prev.sets.map(s=>({weight:s.weight??"",reps:s.reps??"",rpe:s.rpe??""})));
+      setLoaded(true);
+    });
+  },[name]);
+  function setRow(i,field,v){ setRows(r=>r.map((row,idx)=>idx===i?{...row,[field]:v}:row)); }
+  async function save(){
+    const sets=rows.map(r=>({weight:parseFloat(r.weight)||0,reps:parseInt(r.reps)||0,rpe:r.rpe?parseFloat(r.rpe):null})).filter(s=>s.weight||s.reps);
+    if(!sets.length){ onClose(); return; }
+    await saveExLog(name,sets);
+    onSaved?.(); onClose();
+  }
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.8)",zIndex:250,display:"flex",alignItems:"flex-end"}} onClick={onClose}>
+      <div style={{background:T.surface,border:`1px solid ${color}44`,borderRadius:"14px 14px 0 0",width:"100%",maxHeight:"78vh",overflow:"auto",padding:18}} onClick={e=>e.stopPropagation()}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+          <div>
+            <div style={{fontSize:9,fontWeight:700,letterSpacing:2,color,textTransform:"uppercase",marginBottom:2}}>Registrar series</div>
+            <div style={{fontFamily:"Impact,sans-serif",fontSize:18,color:"#fff"}}>{name}</div>
+          </div>
+          <button onClick={onClose} style={{background:"none",border:"none",color:T.muted,fontSize:20,cursor:"pointer"}}>✕</button>
+        </div>
+        <div style={{fontSize:9,color:T.muted,marginBottom:10}}>Objetivo: {slot.sets} series × {slot.reps} reps · {loaded?"prefill con tu última sesión":"cargando…"}</div>
+        <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:14}}>
+          {rows.map((row,i)=>(
+            <div key={i} style={{display:"flex",gap:6,alignItems:"center"}}>
+              <span style={{width:20,fontSize:10,color:T.muted,fontFamily:T.mono}}>{i+1}</span>
+              <input type="number" step=".5" placeholder="kg" value={row.weight} onChange={e=>setRow(i,"weight",e.target.value)}
+                style={{flex:1,background:T.card,border:`1px solid ${T.border}`,borderRadius:6,padding:"7px 8px",color:T.white,fontSize:12,fontFamily:T.mono,outline:"none"}}/>
+              <span style={{color:T.muted,fontSize:11}}>×</span>
+              <input type="number" placeholder="reps" value={row.reps} onChange={e=>setRow(i,"reps",e.target.value)}
+                style={{flex:1,background:T.card,border:`1px solid ${T.border}`,borderRadius:6,padding:"7px 8px",color:T.white,fontSize:12,fontFamily:T.mono,outline:"none"}}/>
+              <input type="number" step=".5" placeholder="RPE" value={row.rpe} onChange={e=>setRow(i,"rpe",e.target.value)}
+                style={{width:56,background:T.card,border:`1px solid ${T.border}`,borderRadius:6,padding:"7px 8px",color:T.white,fontSize:12,fontFamily:T.mono,outline:"none"}}/>
+            </div>
+          ))}
+        </div>
+        <button onClick={save} style={{width:"100%",background:color+"22",border:`1px solid ${color}55`,borderRadius:8,padding:"10px",color,fontSize:11,fontWeight:700,textTransform:"uppercase",cursor:"pointer"}}>
+          ✓ Guardar sesión
+        </button>
       </div>
     </div>
   );
@@ -507,7 +652,7 @@ const DAY_INFO = {
   ride:{icon:"🚴",title:"Domingo · Ciclismo",color:"#f59e0b",items:[">50 km en ruta — ritmo conversacional en Z2","Ritmo: 65–75% FCmax para desarrollo aeróbico de base","Nutrición en bici: 60g carbos/hora después de 45 min","Hidratación: 500–750ml/hora según el calor de Medellín","Post-ride: proteína + carbos dentro de los 30 minutos"]},
 };
 
-function DayContent({dayKey,swaps,onSwap,onDetail,color}) {
+function DayContent({dayKey,swaps,onSwap,onDetail,onLog,logVersion,color}) {
   const routine=ROUTINE[dayKey];
   if(routine) return (
     <div>
@@ -534,7 +679,7 @@ function DayContent({dayKey,swaps,onSwap,onDetail,color}) {
       )}
       <div style={{display:"flex",flexDirection:"column",gap:6}}>
         {routine.slots.map(slot=>(
-          <ExCard key={slot.id} slot={slot} override={swaps[slot.id]||null} color={color} onSwap={onSwap} onDetail={onDetail}/>
+          <ExCard key={slot.id} slot={slot} override={swaps[slot.id]||null} color={color} onSwap={onSwap} onDetail={onDetail} onLog={onLog} logVersion={logVersion}/>
         ))}
       </div>
       {Object.keys(swaps).length>0&&(
@@ -569,26 +714,33 @@ function WorkoutModule() {
   const [detailSlotId,setDetailSlotId]=useState(null);
   const [detailId,setDetailId]=useState(null);
   const [detailName,setDetailName]=useState("");
+  const [logTarget,setLogTarget]=useState(null);
+  const [logVersion,setLogVersion]=useState(0);
   const sched=SCHEDULE[dow(selDate)];
   function handleSwap(slot){setSwapTarget({slot,color:sched.color});}
   function applySwap(slotId,ex){setSwaps(s=>({...s,[slotId]:ex}));setSwapTarget(null);}
   function openDetail(slotId, wgerId, name){setDetailSlotId(slotId);setDetailId(wgerId);setDetailName(name);}
   function closeDetail(){setDetailSlotId(null);setDetailId(null);}
+  function handleLog(slot,override){setLogTarget({slot,override});}
   return (
     <div>
       <WeekNav selDate={selDate} onSelect={setSelDate}/>
-      <DayContent dayKey={sched.key} swaps={swaps} onSwap={handleSwap} onDetail={openDetail} color={sched.color}/>
+      <DayContent dayKey={sched.key} swaps={swaps} onSwap={handleSwap} onDetail={openDetail} onLog={handleLog} logVersion={logVersion} color={sched.color}/>
       {swapTarget&&<SwapDrawer slot={swapTarget.slot} color={swapTarget.color} onSwap={applySwap} onClose={()=>setSwapTarget(null)}/>}
       {/* Abre siempre que haya slotId (datos locales) o exId (wger) */}
       {(detailSlotId||detailId)&&(
         <WgerDrawer slotId={detailSlotId} exId={detailId} exName={detailName} color={sched.color} onClose={closeDetail}/>
+      )}
+      {logTarget&&(
+        <LogDrawer slot={logTarget.slot} override={logTarget.override} color={sched.color}
+          onClose={()=>setLogTarget(null)} onSaved={()=>setLogVersion(v=>v+1)}/>
       )}
     </div>
   );
 }
 
 // ── NUTRITION MODULE ──────────────────────────────────────────────────────────
-function NutritionModule({selDate}) {
+function NutritionModule({selDate,targets}) {
   const key=toKey(selDate);
   const [meals,setMeals]=useState([]);
   const [q,setQ]=useState("");
@@ -618,11 +770,11 @@ function NutritionModule({selDate}) {
   return (
     <div>
       <div style={{display:"flex",gap:10,marginBottom:10,background:T.card,borderRadius:12,padding:12,border:`1px solid ${T.border}`,alignItems:"center"}}>
-        <Ring val={tot.kcal} max={TARGETS.kcal}/>
+        <Ring val={tot.kcal} max={targets.kcal}/>
         <div style={{flex:1}}>
-          <Bar label="Proteína" val={tot.protein} max={TARGETS.protein} color={T.blue}/>
-          <Bar label="Carbos"   val={tot.carbs}   max={TARGETS.carbs}   color={T.amber}/>
-          <Bar label="Grasa"    val={tot.fat}     max={TARGETS.fat}     color={T.pink}/>
+          <Bar label="Proteína" val={tot.protein} max={targets.protein} color={T.blue}/>
+          <Bar label="Carbos"   val={tot.carbs}   max={targets.carbs}   color={T.amber}/>
+          <Bar label="Grasa"    val={tot.fat}     max={targets.fat}     color={T.pink}/>
         </div>
       </div>
       <button onClick={()=>setOpen(o=>!o)} style={{width:"100%",background:open?T.dim:T.green+"22",border:`1px solid ${open?T.border:T.green+"55"}`,borderRadius:8,padding:"9px",color:open?T.muted:T.green,fontSize:11,fontWeight:700,letterSpacing:1,textTransform:"uppercase",cursor:"pointer",marginBottom:10}}>
@@ -704,7 +856,7 @@ function NutritionModule({selDate}) {
 }
 
 // ── PROGRESS MODULE ───────────────────────────────────────────────────────────
-function ProgressModule() {
+function ProgressModule({profile,setProfile}) {
   const [data,setData]=useState([]);
   const [form,setForm]=useState({weight:"",fat:"",muscle:""});
   const [ok,setOk]=useState(false);
@@ -713,7 +865,13 @@ function ProgressModule() {
     if(!form.weight)return;
     const e={date:toKey(today()),weight:parseFloat(form.weight),fat:parseFloat(form.fat)||null,muscle:parseFloat(form.muscle)||null};
     const u=[...data.filter(d=>d.date!==e.date),e].sort((a,b)=>a.date.localeCompare(b.date));
-    setData(u); await store.set("metrics",u); setForm({weight:"",fat:"",muscle:""}); setOk(true); setTimeout(()=>setOk(false),2000);
+    setData(u); await store.set("metrics",u);
+    // sincroniza el peso más reciente con el perfil para que TDEE/macros se recalculen
+    if(profile&&setProfile){
+      const p={...profile,weight:e.weight};
+      setProfile(p); await store.set("profile",p);
+    }
+    setForm({weight:"",fat:"",muscle:""}); setOk(true); setTimeout(()=>setOk(false),2000);
   }
   const last=data[data.length-1];
   const delta=k=>{ if(!last||data.length<2)return null; const d=last[k]-data[0][k]; return{v:Math.abs(d).toFixed(1),dir:d<0?"↓":"↑",good:k==="fat"?d<0:d>0}; };
@@ -801,16 +959,108 @@ function ProgressModule() {
   );
 }
 
+// ── PROFILE MODULE ────────────────────────────────────────────────────────────
+function ProfileModule({profile,setProfile}) {
+  const [form,setForm]=useState(profile);
+  const [saved,setSaved]=useState(false);
+  const [impMsg,setImpMsg]=useState("");
+  useEffect(()=>{setForm(profile)},[profile]);
+  const targets = useMemo(()=>computeTargets(form),[form]);
+  async function save(){
+    const p={...form,weight:parseFloat(form.weight)||DEFAULT_PROFILE.weight,height:parseFloat(form.height)||DEFAULT_PROFILE.height,age:parseInt(form.age)||DEFAULT_PROFILE.age};
+    setProfile(p); await store.set("profile",p);
+    setSaved(true); setTimeout(()=>setSaved(false),2000);
+  }
+  return (
+    <div>
+      <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:10,padding:14,marginBottom:12}}>
+        <div style={{fontSize:9,fontWeight:700,letterSpacing:2,color:T.muted,textTransform:"uppercase",marginBottom:10}}>⚙️ Perfil</div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}}>
+          <div>
+            <div style={{fontSize:8,color:T.muted,marginBottom:3}}>Peso (kg)</div>
+            <input type="number" step=".1" value={form.weight} onChange={e=>setForm(f=>({...f,weight:e.target.value}))}
+              style={{width:"100%",background:T.surface,border:`1px solid ${T.border}`,borderRadius:6,padding:"6px 8px",color:T.white,fontSize:13,fontFamily:T.mono,outline:"none",boxSizing:"border-box"}}/>
+          </div>
+          <div>
+            <div style={{fontSize:8,color:T.muted,marginBottom:3}}>Altura (cm)</div>
+            <input type="number" value={form.height} onChange={e=>setForm(f=>({...f,height:e.target.value}))}
+              style={{width:"100%",background:T.surface,border:`1px solid ${T.border}`,borderRadius:6,padding:"6px 8px",color:T.white,fontSize:13,fontFamily:T.mono,outline:"none",boxSizing:"border-box"}}/>
+          </div>
+          <div>
+            <div style={{fontSize:8,color:T.muted,marginBottom:3}}>Edad</div>
+            <input type="number" value={form.age} onChange={e=>setForm(f=>({...f,age:e.target.value}))}
+              style={{width:"100%",background:T.surface,border:`1px solid ${T.border}`,borderRadius:6,padding:"6px 8px",color:T.white,fontSize:13,fontFamily:T.mono,outline:"none",boxSizing:"border-box"}}/>
+          </div>
+          <div>
+            <div style={{fontSize:8,color:T.muted,marginBottom:3}}>Sexo</div>
+            <div style={{display:"flex",gap:4}}>
+              {["M","F"].map(s=>(
+                <button key={s} onClick={()=>setForm(f=>({...f,sex:s}))} style={{flex:1,background:form.sex===s?T.blue+"22":T.surface,border:`1px solid ${form.sex===s?T.blue+"66":T.border}`,borderRadius:6,padding:"6px 0",color:form.sex===s?T.blue:T.muted,fontSize:12,fontWeight:700,cursor:"pointer"}}>{s}</button>
+              ))}
+            </div>
+          </div>
+        </div>
+        <div style={{marginBottom:10}}>
+          <div style={{fontSize:8,color:T.muted,marginBottom:3}}>Actividad</div>
+          <select value={form.activity} onChange={e=>setForm(f=>({...f,activity:parseFloat(e.target.value)}))}
+            style={{width:"100%",background:T.surface,border:`1px solid ${T.border}`,borderRadius:6,padding:"7px 8px",color:T.white,fontSize:11,outline:"none",fontFamily:T.font}}>
+            {ACTIVITY.map(a=><option key={a.v} value={a.v}>{a.l}</option>)}
+          </select>
+        </div>
+        <div style={{marginBottom:12}}>
+          <div style={{fontSize:8,color:T.muted,marginBottom:3}}>Objetivo</div>
+          <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+            {GOALS.map(g=>(
+              <button key={g.v} onClick={()=>setForm(f=>({...f,goal:g.v}))} style={{flex:"1 1 30%",background:form.goal===g.v?T.green+"22":T.surface,border:`1px solid ${form.goal===g.v?T.green+"66":T.border}`,borderRadius:6,padding:"6px 4px",color:form.goal===g.v?T.green:T.muted,fontSize:9,fontWeight:700,cursor:"pointer"}}>{g.l}</button>
+            ))}
+          </div>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:5,marginBottom:12}}>
+          {[{k:"kcal",l:"KCAL",c:T.amber},{k:"protein",l:"PROT",c:T.blue},{k:"carbs",l:"CARB",c:T.green},{k:"fat",l:"GRASA",c:T.pink}].map(m=>(
+            <div key={m.k} style={{background:m.c+"11",border:`1px solid ${m.c}33`,borderRadius:7,padding:"6px 4px",textAlign:"center"}}>
+              <div style={{fontFamily:T.mono,fontSize:14,fontWeight:700,color:m.c}}>{targets[m.k]}{m.k!=="kcal"?"g":""}</div>
+              <div style={{fontSize:7,color:T.muted}}>{m.l}</div>
+            </div>
+          ))}
+        </div>
+        <div style={{fontSize:9,color:T.muted,marginBottom:10}}>TDEE estimado: <strong style={{color:T.white}}>{targets.tdee} kcal</strong> · calculado con Mifflin-St Jeor + tu nivel de actividad y objetivo. Se recalcula solo si actualizas tu peso en Progreso.</div>
+        <button onClick={save} style={{width:"100%",background:T.blue+"22",border:`1px solid ${T.blue}55`,borderRadius:7,padding:"9px",color:T.blue,fontSize:11,fontWeight:700,textTransform:"uppercase",cursor:"pointer"}}>
+          {saved?"✓ Guardado":"Guardar perfil"}
+        </button>
+      </div>
+      <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:10,padding:14}}>
+        <div style={{fontSize:9,fontWeight:700,letterSpacing:2,color:T.muted,textTransform:"uppercase",marginBottom:8}}>💾 Datos (respaldo local)</div>
+        <div style={{fontSize:9,color:T.muted,marginBottom:10,lineHeight:1.6}}>Todo se guarda solo en este navegador. Exporta un respaldo antes de borrar caché o cambiar de dispositivo.</div>
+        <div style={{display:"flex",gap:6}}>
+          <button onClick={exportBackup} style={{flex:1,background:T.green+"22",border:`1px solid ${T.green}55`,borderRadius:7,padding:"9px",color:T.green,fontSize:10,fontWeight:700,textTransform:"uppercase",cursor:"pointer"}}>⬇ Exportar</button>
+          <label style={{flex:1,background:T.amber+"22",border:`1px solid ${T.amber}55`,borderRadius:7,padding:"9px",color:T.amber,fontSize:10,fontWeight:700,textTransform:"uppercase",cursor:"pointer",textAlign:"center"}}>
+            ⬆ Importar
+            <input type="file" accept="application/json" style={{display:"none"}} onChange={e=>{
+              const f=e.target.files?.[0]; if(!f)return;
+              importBackup(f, ok=>{ setImpMsg(ok?"Importado — recarga la página":"Archivo inválido"); if(ok) setTimeout(()=>window.location.reload(),1200); });
+            }}/>
+          </label>
+        </div>
+        {impMsg&&<div style={{fontSize:9,color:T.muted,marginTop:8,textAlign:"center"}}>{impMsg}</div>}
+      </div>
+    </div>
+  );
+}
+
 // ── APP SHELL ─────────────────────────────────────────────────────────────────
 const TABS=[
   {id:"workout",  l:"Rutina",   i:"🏋️",c:"#3b82f6"},
   {id:"nutrition",l:"Nutrición",i:"🥗", c:"#10b981"},
   {id:"progress", l:"Progreso", i:"📈", c:"#06b6d4"},
+  {id:"profile",  l:"Perfil",   i:"⚙️", c:"#8b5cf6"},
 ];
 
 export default function App() {
   const [tab,setTab]=useState("workout");
   const [nutDate,setNutDate]=useState(today());
+  const [profile,setProfile]=useState(DEFAULT_PROFILE);
+  useEffect(()=>{ store.get("profile").then(p=>{ if(p) setProfile({...DEFAULT_PROFILE,...p}); }); },[]);
+  const targets = useMemo(()=>computeTargets(profile),[profile]);
   const accent=TABS.find(t=>t.id===tab)?.c||"#3b82f6";
   return (
     <div style={{background:T.bg,color:T.white,fontFamily:T.font,minHeight:"100vh",padding:12}}>
@@ -824,7 +1074,7 @@ export default function App() {
             </div>
           </div>
           <div style={{display:"flex",gap:5}}>
-            {[{v:"690+",l:"EJERC.",c:"#3b82f6"},{v:"88.7",l:"KG",c:T.white},{v:"175g",l:"PROT",c:"#10b981"}].map(s=>(
+            {[{v:"690+",l:"EJERC.",c:"#3b82f6"},{v:String(profile.weight),l:"KG",c:T.white},{v:`${targets.protein}g`,l:"PROT",c:"#10b981"}].map(s=>(
               <div key={s.l} style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:7,padding:"5px 8px",textAlign:"center"}}>
                 <div style={{fontFamily:T.mono,fontSize:13,fontWeight:700,color:s.c,lineHeight:1}}>{s.v}</div>
                 <div style={{fontSize:7,letterSpacing:1,color:T.muted,marginTop:1}}>{s.l}</div>
@@ -842,8 +1092,9 @@ export default function App() {
       </div>
       {tab==="nutrition"&&<WeekNav selDate={nutDate} onSelect={setNutDate}/>}
       {tab==="workout"  &&<WorkoutModule/>}
-      {tab==="nutrition"&&<NutritionModule selDate={nutDate}/>}
-      {tab==="progress" &&<ProgressModule/>}
+      {tab==="nutrition"&&<NutritionModule selDate={nutDate} targets={targets}/>}
+      {tab==="progress" &&<ProgressModule profile={profile} setProfile={setProfile}/>}
+      {tab==="profile"  &&<ProfileModule profile={profile} setProfile={setProfile}/>}
     </div>
   );
 }
