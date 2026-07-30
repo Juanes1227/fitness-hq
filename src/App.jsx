@@ -167,34 +167,44 @@ const store = {
 };
 
 // ── wger API ──────────────────────────────────────────────────────────────────
+// wger renombró/eliminó los endpoints antiguos (/exercisesearch/, /exercisetranslation/
+// sin guion → ambos dan 404 hoy) y además el filtro `search=`/`name=` de su API está roto
+// del lado del servidor (ver https://github.com/wger-project/wger/issues/642), así que
+// cacheamos el catálogo completo una vez (vía /exercise-translation/, el endpoint vigente)
+// y filtramos en el cliente.
+const PAGE = 500;
+let wgerCachePromise = null;
+
+function fetchJSON(url, timeoutMs = 12000) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), timeoutMs);
+  return fetch(url, { signal: ctrl.signal }).then(r => r.json()).finally(() => clearTimeout(t));
+}
+
+function loadWgerCache() {
+  if (!wgerCachePromise) {
+    wgerCachePromise = (async () => {
+      const first = await fetchJSON(`${WGER}/exercise-translation/?format=json&language=2&limit=${PAGE}`);
+      const count = first.count || 0;
+      const offsets = [];
+      for (let off = PAGE; off < count; off += PAGE) offsets.push(off);
+      const rest = await Promise.all(offsets.map(off =>
+        fetchJSON(`${WGER}/exercise-translation/?format=json&language=2&limit=${PAGE}&offset=${off}`)
+          .then(d => d.results || [])
+          .catch(() => [])
+      ));
+      return [first.results || [], ...rest].flat();
+    })();
+    wgerCachePromise.catch(() => { wgerCachePromise = null; });
+  }
+  return wgerCachePromise;
+}
+
 async function wgerSearch(term) {
   try {
-    const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), 8000);
-    // Sin filtro de idioma para maximizar resultados; base_id es el ID canónico
-    const res = await fetch(
-      `${WGER}/exercisesearch/?term=${encodeURIComponent(term)}&format=json`,
-      { signal: ctrl.signal }
-    );
-    clearTimeout(t);
-    const data = await res.json();
-    const primary = (data.suggestions||[])
-      .filter(s => s.data?.base_id || s.data?.id)
-      .slice(0, 10)
-      .map(s => ({ id: s.data.base_id ?? s.data.id, name: s.value }));
-    if (primary.length) return primary;
-
-    // Fallback: buscar por nombre en exercisetranslation (inglés = language 2)
-    const ctrl2 = new AbortController();
-    const t2 = setTimeout(() => ctrl2.abort(), 8000);
-    const res2 = await fetch(
-      `${WGER}/exercisetranslation/?format=json&language=2&limit=15`,
-      { signal: ctrl2.signal }
-    );
-    clearTimeout(t2);
-    const data2 = await res2.json();
+    const all = await loadWgerCache();
     const low = term.toLowerCase();
-    return (data2.results||[])
+    return all
       .filter(r => r.name?.toLowerCase().includes(low))
       .slice(0, 10)
       .map(r => ({ id: r.exercise, name: r.name }));
