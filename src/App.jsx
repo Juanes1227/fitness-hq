@@ -23,6 +23,12 @@ const GOALS = [
   {v:"bulk",    l:"Superávit — ganar músculo", pct:0.10,  protPerKg:1.8},
 ];
 const DEFAULT_PROFILE = { weight:88.7, height:175, age:30, sex:"M", activity:1.55, goal:"cut" };
+// Adaptación de la rutina según el objetivo activo del perfil
+const GOAL_GUIDANCE = {
+  cut:      { txt:"En déficit calórico: prioriza técnica sobre carga máxima. Si la fatiga es alta, baja 1 serie de accesorios (no de los compuestos principales) antes que bajar peso.", c:"#f59e0b" },
+  maintain: { txt:"En mantenimiento: el objetivo es consistencia semana a semana — repite el volumen, no busques progresión agresiva.", c:"#3b82f6" },
+  bulk:     { txt:"En superávit: hay margen de energía. Si te sientes con energía, añade una serie extra (back-off set) en el primer compuesto del día.", c:"#10b981" },
+};
 
 function bmr({weight,height,age,sex}) {
   const base = 10*weight + 6.25*height - 5*age;
@@ -285,6 +291,99 @@ function buildAnalytics(logs) {
   names.forEach(n => logs[n].forEach(s => { if (s.date>=wkStart) sessionsThisWeek.add(s.date); }));
   const adherence = Math.min(100, Math.round(sessionsThisWeek.size/LIFT_DAYS_PER_WEEK*100));
   return { names, weeks, prs, adherence, sessionsThisWeek: sessionsThisWeek.size };
+}
+
+// ── Motor de recomendaciones (reglas sobre datos ya registrados, sin IA/costo) ──
+// Mapea nombre de ejercicio → grupos musculares, solo para los ejercicios base
+// de la rutina (los que tienen entrada en EX_DB). Las alternativas de swap sin
+// wger id no tienen datos musculares locales y quedan fuera de este análisis.
+function buildMuscleMap() {
+  const map = {};
+  Object.values(ROUTINE).forEach(r => r.slots.forEach(slot => {
+    const info = EX_DB[slot.id];
+    if (info) map[slot.name] = { primary: info.muscles||[], secondary: info.sec||[] };
+  }));
+  return map;
+}
+const MUSCLE_MAP = buildMuscleMap();
+
+// Series esperadas por músculo en un ciclo semanal completo, según la rutina fija
+function expectedWeeklySets() {
+  const exp = {};
+  Object.values(ROUTINE).forEach(r => r.slots.forEach(slot => {
+    const info = EX_DB[slot.id]; if (!info) return;
+    (info.muscles||[]).forEach(m => exp[m] = (exp[m]||0) + slot.sets);
+    (info.sec||[]).forEach(m => exp[m] = (exp[m]||0) + slot.sets*0.5);
+  }));
+  return exp;
+}
+
+function scanMealLogs() {
+  const out = {};
+  for (let i=0;i<localStorage.length;i++) {
+    const k = localStorage.key(i);
+    if (!k || !k.startsWith("meals:")) continue;
+    try { const v = JSON.parse(localStorage.getItem(k)); if (v?.length) out[k.slice(6)] = v; } catch {}
+  }
+  return out;
+}
+
+function buildRecommendations({logs, meals, targets}) {
+  const recs = [];
+  const names = Object.keys(logs);
+  const since14 = toKey(addDays(today(),-14));
+
+  // 1) Volumen por músculo vs. lo esperado en las últimas 2 semanas
+  const actual = {};
+  names.forEach(n => {
+    const map = MUSCLE_MAP[n]; if (!map) return;
+    logs[n].filter(s=>s.date>=since14).forEach(s => {
+      const nSets = s.sets.filter(x=>x.weight||x.reps).length;
+      map.primary.forEach(m => actual[m]=(actual[m]||0)+nSets);
+      map.secondary.forEach(m => actual[m]=(actual[m]||0)+nSets*0.5);
+    });
+  });
+  Object.entries(expectedWeeklySets()).forEach(([muscle,expPerWeek]) => {
+    const exp2wk = expPerWeek*2;
+    const act = actual[muscle]||0;
+    if (exp2wk>=2 && act < exp2wk*0.6) {
+      recs.push({ icon:"💪", c:T.amber, title:`Poco volumen en ${muscle}`,
+        detail:`${Math.round(act*10)/10}/${exp2wk} series esperadas en las últimas 2 semanas. Revisa si estás saltando o cambiando seguido los ejercicios que lo trabajan.` });
+    }
+  });
+
+  // 2) Estancamiento: el 1RM estimado no sube en las últimas 3 sesiones registradas
+  names.forEach(n => {
+    const hist = logs[n].filter(s=>s.sets.some(x=>x.weight&&x.reps));
+    if (hist.length<3) return;
+    const last3 = hist.slice(-3).map(s=>Math.max(...s.sets.map(x=>e1rm(x.weight||0,x.reps||0))));
+    if (last3[2]<=last3[0]*1.01) {
+      recs.push({ icon:"📉", c:T.red, title:`Estancamiento en ${n}`,
+        detail:`Tu 1RM estimado no subió en las últimas 3 sesiones (${last3[0]}kg → ${last3[2]}kg). Considera un deload, variar el ejercicio, o revisar sueño y calorías.` });
+    }
+  });
+
+  // 3) Consistencia nutricional — proteína y calorías vs. objetivo
+  const mealDates = Object.keys(meals).filter(d=>d>=since14).sort();
+  if (mealDates.length>=3) {
+    const avg = k => mealDates.reduce((a,d)=>a+meals[d].reduce((s,m)=>s+(m[k]||0),0),0)/mealDates.length;
+    const avgProtein = avg("protein"), avgKcal = avg("kcal");
+    if (avgProtein < targets.protein*0.85) {
+      const gap = Math.round(targets.protein-avgProtein);
+      recs.push({ icon:"🥩", c:T.blue, title:"Proteína por debajo del objetivo",
+        detail:`Promedio ${Math.round(avgProtein)}g/día vs ${targets.protein}g objetivo (últimos ${mealDates.length} días con registro). Te faltan ~${gap}g: eso equivale a ~${Math.round(gap/31*100)}g de pechuga de pollo, ${Math.ceil(gap/11)} huevos, o un scoop extra de proteína en polvo.` });
+    }
+    if (Math.abs(avgKcal-targets.kcal) > targets.kcal*0.15) {
+      const over = avgKcal>targets.kcal;
+      recs.push({ icon: over?"⚠️":"🔻", c:T.amber, title: over?"Calorías por encima del objetivo":"Calorías por debajo del objetivo",
+        detail:`Promedio ${Math.round(avgKcal)} kcal/día vs ${targets.kcal} objetivo. ${over?"Puede frenar tu progreso hacia el déficit/objetivo actual.":"Puede afectar tu energía para entrenar y la recuperación."}` });
+    }
+  } else {
+    recs.push({ icon:"📋", c:T.muted, title:"Poco registro nutricional",
+      detail:"Registra comidas al menos 3–4 días para que esta sección pueda darte una recomendación de macros basada en datos reales." });
+  }
+
+  return recs;
 }
 
 // ── wger API ──────────────────────────────────────────────────────────────────
@@ -694,8 +793,9 @@ const DAY_INFO = {
   ride:{icon:"🚴",title:"Domingo · Ciclismo",color:"#f59e0b",items:[">50 km en ruta — ritmo conversacional en Z2","Ritmo: 65–75% FCmax para desarrollo aeróbico de base","Nutrición en bici: 60g carbos/hora después de 45 min","Hidratación: 500–750ml/hora según el calor de Medellín","Post-ride: proteína + carbos dentro de los 30 minutos"]},
 };
 
-function DayContent({dayKey,swaps,onSwap,onDetail,onLog,logVersion,color}) {
+function DayContent({dayKey,swaps,onSwap,onDetail,onLog,logVersion,color,goal}) {
   const routine=ROUTINE[dayKey];
+  const guidance = GOAL_GUIDANCE[goal];
   if(routine) return (
     <div>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
@@ -717,6 +817,11 @@ function DayContent({dayKey,swaps,onSwap,onDetail,onLog,logVersion,color}) {
       {routine.note&&(
         <div style={{background:color+"11",border:`1px solid ${color}33`,borderRadius:8,padding:"8px 12px",marginBottom:10,fontSize:10,color:color+"cc"}}>
           💡 {routine.note}
+        </div>
+      )}
+      {guidance&&(
+        <div style={{background:guidance.c+"11",border:`1px solid ${guidance.c}33`,borderRadius:8,padding:"8px 12px",marginBottom:10,fontSize:10,color:guidance.c}}>
+          🎯 {guidance.txt}
         </div>
       )}
       <div style={{display:"flex",flexDirection:"column",gap:6}}>
@@ -749,7 +854,7 @@ function DayContent({dayKey,swaps,onSwap,onDetail,onLog,logVersion,color}) {
 }
 
 // ── WORKOUT MODULE ────────────────────────────────────────────────────────────
-function WorkoutModule() {
+function WorkoutModule({goal}) {
   const [selDate,setSelDate]=useState(today());
   const [swaps,setSwaps]=useState({});
   const [swapTarget,setSwapTarget]=useState(null);
@@ -767,7 +872,7 @@ function WorkoutModule() {
   return (
     <div>
       <WeekNav selDate={selDate} onSelect={setSelDate}/>
-      <DayContent dayKey={sched.key} swaps={swaps} onSwap={handleSwap} onDetail={openDetail} onLog={handleLog} logVersion={logVersion} color={sched.color}/>
+      <DayContent dayKey={sched.key} swaps={swaps} onSwap={handleSwap} onDetail={openDetail} onLog={handleLog} logVersion={logVersion} color={sched.color} goal={goal}/>
       {swapTarget&&<SwapDrawer slot={swapTarget.slot} color={swapTarget.color} onSwap={applySwap} onClose={()=>setSwapTarget(null)}/>}
       {/* Abre siempre que haya slotId (datos locales) o exId (wger) */}
       {(detailSlotId||detailId)&&(
@@ -1104,24 +1209,41 @@ function VolBar({week,vol,max,color}) {
   );
 }
 
-function AnalyticsModule() {
+function AnalyticsModule({targets}) {
   const [logs,setLogs] = useState(null);
-  useEffect(()=>{ setLogs(scanExerciseLogs()); },[]);
+  const [meals,setMeals] = useState(null);
+  useEffect(()=>{ setLogs(scanExerciseLogs()); setMeals(scanMealLogs()); },[]);
   const { names, weeks, prs, adherence, sessionsThisWeek } = useMemo(()=>buildAnalytics(logs||{}),[logs]);
-  if (!logs) return null;
-
-  if (!names.length) return (
-    <div style={{textAlign:"center",padding:"30px 10px",color:T.muted,fontSize:11,lineHeight:1.8}}>
-      Aún no hay series registradas.<br/>
-      Ve a <strong style={{color:T.white}}>Rutina</strong> → abre un ejercicio → <strong style={{color:T.blue}}>📝 Registrar series</strong>.<br/>
-      En cuanto guardes tu primera sesión, aquí vas a ver volumen, PRs y adherencia.
-    </div>
-  );
+  const recs = useMemo(()=> (logs&&meals) ? buildRecommendations({logs,meals,targets}) : [], [logs,meals,targets]);
+  if (!logs || !meals) return null;
 
   const maxVol = Math.max(...weeks.map(([,v])=>v), 1);
 
   return (
     <div>
+      {recs.length>0 && (
+        <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:10,padding:12,marginBottom:12}}>
+          <div style={{fontSize:9,fontWeight:700,letterSpacing:2,color:T.muted,textTransform:"uppercase",marginBottom:9}}>🧠 Recomendaciones</div>
+          <div style={{display:"flex",flexDirection:"column",gap:6}}>
+            {recs.map((r,i)=>(
+              <div key={i} style={{background:r.c+"11",border:`1px solid ${r.c}33`,borderRadius:8,padding:"9px 11px"}}>
+                <div style={{fontSize:11,fontWeight:700,color:r.c,marginBottom:3}}>{r.icon} {r.title}</div>
+                <div style={{fontSize:10,color:T.white,lineHeight:1.5}}>{r.detail}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {!names.length && (
+        <div style={{textAlign:"center",padding:"20px 10px",color:T.muted,fontSize:11,lineHeight:1.8,marginBottom:12}}>
+          Aún no hay series registradas.<br/>
+          Ve a <strong style={{color:T.white}}>Rutina</strong> → abre un ejercicio → <strong style={{color:T.blue}}>📝 Registrar series</strong>.<br/>
+          En cuanto guardes tu primera sesión, aquí vas a ver volumen, PRs y adherencia.
+        </div>
+      )}
+
+      {names.length>0 && (
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:7,marginBottom:12}}>
         <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:9,padding:"10px 8px",textAlign:"center"}}>
           <div style={{fontSize:8,color:T.muted,letterSpacing:1.5,textTransform:"uppercase",marginBottom:3}}>Adherencia semana</div>
@@ -1134,6 +1256,7 @@ function AnalyticsModule() {
           <div style={{fontSize:8,color:T.muted}}>de {Object.keys(EX_DB).length} en la rutina</div>
         </div>
       </div>
+      )}
 
       {weeks.length>0 && (
         <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:10,padding:12,marginBottom:12}}>
@@ -1212,10 +1335,10 @@ export default function App() {
         ))}
       </div>
       {tab==="nutrition"&&<WeekNav selDate={nutDate} onSelect={setNutDate}/>}
-      {tab==="workout"  &&<WorkoutModule/>}
+      {tab==="workout"  &&<WorkoutModule goal={profile.goal}/>}
       {tab==="nutrition"&&<NutritionModule selDate={nutDate} targets={targets}/>}
       {tab==="progress" &&<ProgressModule profile={profile} setProfile={setProfile}/>}
-      {tab==="analytics"&&<AnalyticsModule/>}
+      {tab==="analytics"&&<AnalyticsModule targets={targets}/>}
       {tab==="profile"  &&<ProfileModule profile={profile} setProfile={setProfile}/>}
     </div>
   );
