@@ -90,9 +90,35 @@ const store = {
 // ── wger API ──────────────────────────────────────────────────────────────────
 async function wgerSearch(term) {
   try {
-    const res = await fetch(`${WGER}/exercisesearch/?term=${encodeURIComponent(term)}&language=english&format=json`);
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 8000);
+    // Sin filtro de idioma para maximizar resultados; base_id es el ID canónico
+    const res = await fetch(
+      `${WGER}/exercisesearch/?term=${encodeURIComponent(term)}&format=json`,
+      { signal: ctrl.signal }
+    );
+    clearTimeout(t);
     const data = await res.json();
-    return (data.suggestions||[]).slice(0,8).map(s=>({id:s.data?.id,name:s.value}));
+    const primary = (data.suggestions||[])
+      .filter(s => s.data?.base_id || s.data?.id)
+      .slice(0, 10)
+      .map(s => ({ id: s.data.base_id ?? s.data.id, name: s.value }));
+    if (primary.length) return primary;
+
+    // Fallback: buscar por nombre en exercisetranslation (inglés = language 2)
+    const ctrl2 = new AbortController();
+    const t2 = setTimeout(() => ctrl2.abort(), 8000);
+    const res2 = await fetch(
+      `${WGER}/exercisetranslation/?format=json&language=2&limit=15`,
+      { signal: ctrl2.signal }
+    );
+    clearTimeout(t2);
+    const data2 = await res2.json();
+    const low = term.toLowerCase();
+    return (data2.results||[])
+      .filter(r => r.name?.toLowerCase().includes(low))
+      .slice(0, 10)
+      .map(r => ({ id: r.exercise, name: r.name }));
   } catch { return []; }
 }
 
@@ -117,25 +143,44 @@ async function wgerInfo(id) {
 // ── Nutrition APIs ────────────────────────────────────────────────────────────
 async function searchUSDA(q) {
   try {
-    const r=await fetch(`${USDA}?query=${encodeURIComponent(q)}&api_key=${USDA_K}&pageSize=6&dataType=Foundation,SR%20Legacy`);
-    const d=await r.json();
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 8000);
+    // Branded + Foundation + SR Legacy + Survey para cubrir alimentos procesados y crudos
+    const r = await fetch(
+      `${USDA}?query=${encodeURIComponent(q)}&api_key=${USDA_K}&pageSize=8&dataType=Foundation,SR%20Legacy,Survey%20(FNDDS),Branded`,
+      { signal: ctrl.signal }
+    );
+    clearTimeout(t);
+    const d = await r.json();
+    if (d.error) return []; // DEMO_KEY rate-limited
     return (d.foods||[]).map(f=>{
       const g=id=>{const n=(f.foodNutrients||[]).find(n=>n.nutrientId===id);return n?Math.round(n.value*10)/10:0;};
       return {id:`u${f.fdcId}`,name:f.description,src:"USDA",per100:{kcal:g(1008),protein:g(1003),carbs:g(1005),fat:g(1004)}};
-    });
+    }).filter(f=>f.per100.kcal>0);
   } catch{return[];}
 }
 
 async function searchOFF(q) {
   try {
-    const r=await fetch(`${OFF}?search_terms=${encodeURIComponent(q)}&action=process&json=1&page_size=6&lc=es&cc=co`);
-    const d=await r.json();
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 10000);
+    // Sin cc=co: busca en la base global (>3M productos) no solo Colombia
+    // lc=es prioriza nombres en español pero incluye todo
+    const r = await fetch(
+      `${OFF}?search_terms=${encodeURIComponent(q)}&action=process&json=1&page_size=15&fields=product_name,nutriments,brands,countries_tags`,
+      { signal: ctrl.signal }
+    );
+    clearTimeout(t);
+    const d = await r.json();
     return (d.products||[]).filter(p=>p.product_name&&p.nutriments).map(p=>{
       const n=p.nutriments;
-      return {id:`o${p.code}`,name:p.product_name,src:"🇨🇴 OFF",
-        per100:{kcal:Math.round(n["energy-kcal_100g"]||0),protein:Math.round((n.proteins_100g||0)*10)/10,
+      // energy-kcal_100g directa; si no, convertir kJ (energy_100g)
+      const kcal = Math.round(n["energy-kcal_100g"] || (n["energy_100g"]||0)/4.184);
+      const co = (p.countries_tags||[]).some(c=>c.includes("colombia"))?"🇨🇴 ":"🌍 ";
+      return {id:`o${p.code}`,name:p.product_name,src:co+"OFF",
+        per100:{kcal,protein:Math.round((n.proteins_100g||0)*10)/10,
                 carbs:Math.round((n.carbohydrates_100g||0)*10)/10,fat:Math.round((n.fat_100g||0)*10)/10}};
-    }).filter(f=>f.per100.kcal>0);
+    }).filter(f=>f.per100.kcal>0).slice(0,12);
   } catch{return[];}
 }
 
