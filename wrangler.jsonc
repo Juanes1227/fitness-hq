@@ -1,7 +1,7 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "fitness-hq",
-  "compatibility_date": "2026-07-30",
+  "compatibility_date": "2026-07-29",
   "main": "src/worker.js",
   "observability": {
     "enabled": true
@@ -17,9 +17,7 @@
     {
       "binding": "DB",
       "database_name": "fitness-hq-db",
-      // Reemplaza esto con el database_id real que te da:
-      //   wrangler d1 create fitness-hq-db
-      "database_id": "REPLACE_WITH_REAL_D1_DATABASE_ID"
+      "database_id": "a5298030-e2a0-480f-ab29-c637938bb150"
     }
   ]
 }
