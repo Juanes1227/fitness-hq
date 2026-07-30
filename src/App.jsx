@@ -1107,8 +1107,8 @@ function VolBar({week,vol,max,color}) {
 function AnalyticsModule() {
   const [logs,setLogs] = useState(null);
   useEffect(()=>{ setLogs(scanExerciseLogs()); },[]);
+  const { names, weeks, prs, adherence, sessionsThisWeek } = useMemo(()=>buildAnalytics(logs||{}),[logs]);
   if (!logs) return null;
-  const { names, weeks, prs, adherence, sessionsThisWeek } = useMemo(()=>buildAnalytics(logs),[logs]);
 
   if (!names.length) return (
     <div style={{textAlign:"center",padding:"30px 10px",color:T.muted,fontSize:11,lineHeight:1.8}}>
