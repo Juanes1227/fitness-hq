@@ -30,6 +30,19 @@ const GOAL_GUIDANCE = {
   maintain: { txt:"En mantenimiento: el objetivo es consistencia semana a semana — repite el volumen, no busques progresión agresiva.", c:"#3b82f6" },
   bulk:     { txt:"En superávit: hay margen de energía. Si te sientes con energía, añade una serie extra (back-off set) en el primer compuesto del día.", c:"#10b981" },
 };
+// Frecuencia semanal sugerida según objetivo — no es una API, son reglas fijas
+// basadas en guías de ciencia del deporte de uso común (ACSM/NSCA):
+//  - En déficit: NO bajes frecuencia de pesas (preserva masa magra); el cardio
+//    extra es la palanca preferida para el gasto calórico adicional.
+//  - En superávit: reduce cardio para proteger recuperación/hipertrofia — el
+//    entrenamiento concurrente de alto volumen interfiere con las ganancias
+//    de fuerza y masa (efecto de "interferencia" del entrenamiento concurrente).
+//  - En mantenimiento: reparto parejo, sin sesgo hacia ningún lado.
+const GOAL_SCHEDULE = {
+  cut:      { liftDays:4, swimDays:2, rideDays:1, why:"Mantenemos 4 días de pesas para no perder masa magra en déficit; el cardio extra (3 sesiones) es la palanca principal para el gasto calórico adicional." },
+  maintain: { liftDays:3, swimDays:2, rideDays:1, why:"Reparto equilibrado — sin sesgo hacia pesas o cardio, priorizando consistencia." },
+  bulk:     { liftDays:4, swimDays:1, rideDays:1, why:"Más frecuencia de pesas para maximizar el estímulo de hipertrofia; cardio reducido para no interferir con la recuperación durante el superávit." },
+};
 
 function bmr({weight,height,age,sex}) {
   const base = 10*weight + 6.25*height - 5*age;
@@ -1134,17 +1147,29 @@ function ProgressModule({profile,setProfile}) {
 // ── PROFILE MODULE ────────────────────────────────────────────────────────────
 const selStyle={width:"100%",background:T.surface,border:`1px solid ${T.border}`,borderRadius:6,padding:"6px 8px",color:T.white,fontSize:12,outline:"none",fontFamily:T.font};
 
-// ── Asistente de horario: sugiere profile.week a partir de unas pocas preguntas
-function ScheduleWizard({onApply}) {
-  const [liftDays,setLiftDays]=useState(3);
-  const [swimDays,setSwimDays]=useState(2);
-  const [rideDays,setRideDays]=useState(1);
+// ── Asistente de horario: sugiere profile.week a partir del objetivo activo
+// (GOAL_SCHEDULE) y deja ajustar manualmente encima de esa base.
+function ScheduleWizard({onApply,goal}) {
+  const rec = GOAL_SCHEDULE[goal] || GOAL_SCHEDULE.maintain;
+  const [liftDays,setLiftDays]=useState(rec.liftDays);
+  const [swimDays,setSwimDays]=useState(rec.swimDays);
+  const [rideDays,setRideDays]=useState(rec.rideDays);
   const [applied,setApplied]=useState(false);
+  // Si cambia el objetivo en el perfil, resincroniza con la recomendación de ese objetivo
+  useEffect(()=>{
+    setLiftDays(rec.liftDays); setSwimDays(rec.swimDays); setRideDays(rec.rideDays); setApplied(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[goal]);
   const preview = useMemo(()=>suggestWeek({liftDays,swimDays,rideDays}),[liftDays,swimDays,rideDays]);
+  const goalLabel = (GOALS.find(g=>g.v===goal)||GOALS[1]).l;
   return (
     <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:10,padding:14,marginBottom:12}}>
       <div style={{fontSize:9,fontWeight:700,letterSpacing:2,color:T.muted,textTransform:"uppercase",marginBottom:8}}>🧭 Sugerir horario</div>
-      <div style={{fontSize:9,color:T.muted,marginBottom:10,lineHeight:1.6}}>Sigue siendo la plantilla pierna/push/pull — esto solo decide cómo se acomoda en tu semana según lo que quieras hacer. Puedes ajustar cualquier día a mano después.</div>
+      <div style={{fontSize:9,color:T.muted,marginBottom:8,lineHeight:1.6}}>Sigue siendo la plantilla pierna/push/pull — esto solo decide cómo se acomoda en tu semana según lo que quieras hacer. Puedes ajustar cualquier día a mano después.</div>
+      <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:7,padding:"8px 10px",marginBottom:10}}>
+        <div style={{fontSize:8,fontWeight:700,letterSpacing:1,color:T.cyan,textTransform:"uppercase",marginBottom:3}}>Recomendado para tu objetivo: {goalLabel}</div>
+        <div style={{fontSize:9,color:T.muted,lineHeight:1.6}}>{rec.liftDays} días de pesas · {rec.swimDays} de natación · {rec.rideDays} de ciclismo. {rec.why}</div>
+      </div>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:10}}>
         <div>
           <div style={{fontSize:8,color:T.muted,marginBottom:3}}>Días de pesas</div>
@@ -1251,7 +1276,7 @@ function ProfileModule({profile,setProfile}) {
           {saved?"✓ Guardado":"Guardar perfil"}
         </button>
       </div>
-      <ScheduleWizard onApply={week=>setForm(f=>({...f,week}))}/>
+      <ScheduleWizard goal={form.goal} onApply={week=>setForm(f=>({...f,week}))}/>
       <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:10,padding:14,marginBottom:12}}>
         <div style={{fontSize:9,fontWeight:700,letterSpacing:2,color:T.muted,textTransform:"uppercase",marginBottom:8}}>📅 Horario semanal</div>
         <div style={{fontSize:9,color:T.muted,marginBottom:10,lineHeight:1.6}}>Es tuyo — no tiene por qué verse igual para alguien que quiera subir de peso o no nade. Asigna qué haces cada día; Rutina, Análisis y las recomendaciones se ajustan solas.</div>
