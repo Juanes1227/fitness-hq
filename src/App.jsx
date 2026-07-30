@@ -245,6 +245,48 @@ function suggestProgression(last, repRange) {
   return { txt:`Repite ${w}kg, busca 1 rep más por serie`, c:T.blue };
 }
 
+// ── Analítica de entrenamiento (agrega todos los exlog:*) ──────────────────────
+const LIFT_DAYS_PER_WEEK = 3; // legs/push/pull programados
+function scanExerciseLogs() {
+  const out = {};
+  for (let i=0;i<localStorage.length;i++) {
+    const k = localStorage.key(i);
+    if (!k || !k.startsWith("exlog:")) continue;
+    try { const v = JSON.parse(localStorage.getItem(k)); if (v?.length) out[k.slice(6)] = v; } catch {}
+  }
+  return out;
+}
+const e1rm = (w,r) => Math.round(w*(1+Math.max(r,0)/30)*10)/10; // Epley
+
+function buildAnalytics(logs) {
+  const names = Object.keys(logs);
+  // Volumen semanal (tonelaje = Σ peso×reps), últimas 8 semanas con datos
+  const volByWeek = {};
+  names.forEach(n => logs[n].forEach(session => {
+    const d = new Date(session.date+"T00:00:00");
+    const wkStart = toKey(addDays(d,-dow(d)));
+    const vol = session.sets.reduce((a,s)=>a+(s.weight*s.reps||0),0);
+    volByWeek[wkStart] = (volByWeek[wkStart]||0) + vol;
+  }));
+  const weeks = Object.entries(volByWeek).sort((a,b)=>a[0].localeCompare(b[0])).slice(-8);
+  // PRs: mejor 1RM estimado por ejercicio
+  const prs = names.map(n => {
+    let best=null;
+    logs[n].forEach(s => s.sets.forEach(set => {
+      if (!set.weight || !set.reps) return;
+      const est = e1rm(set.weight,set.reps);
+      if (!best || est>best.est) best = {est,weight:set.weight,reps:set.reps,date:s.date};
+    }));
+    return best ? {name:n,...best} : null;
+  }).filter(Boolean).sort((a,b)=>b.est-a.est);
+  // Adherencia semana actual (sesiones distintas vs. días de fuerza planeados)
+  const wkStart = toKey(addDays(today(),-dow(today())));
+  const sessionsThisWeek = new Set();
+  names.forEach(n => logs[n].forEach(s => { if (s.date>=wkStart) sessionsThisWeek.add(s.date); }));
+  const adherence = Math.min(100, Math.round(sessionsThisWeek.size/LIFT_DAYS_PER_WEEK*100));
+  return { names, weeks, prs, adherence, sessionsThisWeek: sessionsThisWeek.size };
+}
+
 // ── wger API ──────────────────────────────────────────────────────────────────
 // wger renombró/eliminó los endpoints antiguos (/exercisesearch/, /exercisetranslation/
 // sin guion → ambos dan 404 hoy) y además el filtro `search=`/`name=` de su API está roto
@@ -1047,11 +1089,90 @@ function ProfileModule({profile,setProfile}) {
   );
 }
 
+// ── ANALYTICS MODULE (agrega el log de series en el tiempo) ────────────────────
+function VolBar({week,vol,max,color}) {
+  const pct = Math.max(4,Math.round(vol/max*100));
+  const lbl = week.slice(5).replace("-","/");
+  return (
+    <div style={{display:"flex",alignItems:"center",gap:8}}>
+      <span style={{fontSize:8,color:T.muted,width:32,flexShrink:0,fontFamily:T.mono}}>{lbl}</span>
+      <div style={{flex:1,height:14,background:T.dim,borderRadius:4,overflow:"hidden"}}>
+        <div style={{height:"100%",width:`${pct}%`,background:color,borderRadius:4,transition:"width .4s"}}/>
+      </div>
+      <span style={{fontSize:9,color:T.white,fontFamily:T.mono,width:52,textAlign:"right",flexShrink:0}}>{Math.round(vol/1000*10)/10}t</span>
+    </div>
+  );
+}
+
+function AnalyticsModule() {
+  const [logs,setLogs] = useState(null);
+  useEffect(()=>{ setLogs(scanExerciseLogs()); },[]);
+  if (!logs) return null;
+  const { names, weeks, prs, adherence, sessionsThisWeek } = useMemo(()=>buildAnalytics(logs),[logs]);
+
+  if (!names.length) return (
+    <div style={{textAlign:"center",padding:"30px 10px",color:T.muted,fontSize:11,lineHeight:1.8}}>
+      Aún no hay series registradas.<br/>
+      Ve a <strong style={{color:T.white}}>Rutina</strong> → abre un ejercicio → <strong style={{color:T.blue}}>📝 Registrar series</strong>.<br/>
+      En cuanto guardes tu primera sesión, aquí vas a ver volumen, PRs y adherencia.
+    </div>
+  );
+
+  const maxVol = Math.max(...weeks.map(([,v])=>v), 1);
+
+  return (
+    <div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:7,marginBottom:12}}>
+        <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:9,padding:"10px 8px",textAlign:"center"}}>
+          <div style={{fontSize:8,color:T.muted,letterSpacing:1.5,textTransform:"uppercase",marginBottom:3}}>Adherencia semana</div>
+          <div style={{fontFamily:T.mono,fontSize:19,fontWeight:700,color:adherence>=100?T.green:adherence>=50?T.amber:T.red,lineHeight:1}}>{adherence}%</div>
+          <div style={{fontSize:8,color:T.muted}}>{sessionsThisWeek}/{LIFT_DAYS_PER_WEEK} días logueados</div>
+        </div>
+        <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:9,padding:"10px 8px",textAlign:"center"}}>
+          <div style={{fontSize:8,color:T.muted,letterSpacing:1.5,textTransform:"uppercase",marginBottom:3}}>Ejercicios con historial</div>
+          <div style={{fontFamily:T.mono,fontSize:19,fontWeight:700,color:T.cyan,lineHeight:1}}>{names.length}</div>
+          <div style={{fontSize:8,color:T.muted}}>de {Object.keys(EX_DB).length} en la rutina</div>
+        </div>
+      </div>
+
+      {weeks.length>0 && (
+        <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:10,padding:12,marginBottom:12}}>
+          <div style={{fontSize:9,fontWeight:700,letterSpacing:2,color:T.muted,textTransform:"uppercase",marginBottom:9}}>📦 Volumen semanal (tonelaje)</div>
+          <div style={{display:"flex",flexDirection:"column",gap:6}}>
+            {weeks.map(([wk,vol])=><VolBar key={wk} week={wk} vol={vol} max={maxVol} color={T.blue}/>)}
+          </div>
+        </div>
+      )}
+
+      {prs.length>0 && (
+        <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:10,padding:12}}>
+          <div style={{fontSize:9,fontWeight:700,letterSpacing:2,color:T.muted,textTransform:"uppercase",marginBottom:9}}>🏆 PRs — 1RM estimado (Epley)</div>
+          <div style={{display:"flex",flexDirection:"column",gap:5}}>
+            {prs.map(pr=>(
+              <div key={pr.name} style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:T.surface,border:`1px solid ${T.border}`,borderRadius:7,padding:"7px 10px"}}>
+                <div>
+                  <div style={{fontSize:11,fontWeight:700,color:"#fff"}}>{pr.name}</div>
+                  <div style={{fontSize:9,color:T.muted}}>{pr.weight}kg × {pr.reps} · {pr.date}</div>
+                </div>
+                <div style={{textAlign:"right"}}>
+                  <div style={{fontFamily:T.mono,fontSize:14,fontWeight:700,color:T.amber}}>{pr.est}kg</div>
+                  <div style={{fontSize:7,color:T.muted}}>1RM EST.</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── APP SHELL ─────────────────────────────────────────────────────────────────
 const TABS=[
   {id:"workout",  l:"Rutina",   i:"🏋️",c:"#3b82f6"},
   {id:"nutrition",l:"Nutrición",i:"🥗", c:"#10b981"},
   {id:"progress", l:"Progreso", i:"📈", c:"#06b6d4"},
+  {id:"analytics",l:"Análisis", i:"📊", c:"#f59e0b"},
   {id:"profile",  l:"Perfil",   i:"⚙️", c:"#8b5cf6"},
 ];
 
@@ -1094,6 +1215,7 @@ export default function App() {
       {tab==="workout"  &&<WorkoutModule/>}
       {tab==="nutrition"&&<NutritionModule selDate={nutDate} targets={targets}/>}
       {tab==="progress" &&<ProgressModule profile={profile} setProfile={setProfile}/>}
+      {tab==="analytics"&&<AnalyticsModule/>}
       {tab==="profile"  &&<ProfileModule profile={profile} setProfile={setProfile}/>}
     </div>
   );
