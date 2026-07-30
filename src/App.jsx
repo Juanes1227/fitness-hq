@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
+import { api, exportBundleFromApi } from "./api.js";
 
 const T = {
   bg:"#060810", surface:"#0b1022", card:"#0d1228", border:"#192040",
@@ -22,7 +23,7 @@ const GOALS = [
   {v:"maintain",l:"Mantener",                  pct:0,     protPerKg:2.0},
   {v:"bulk",    l:"Superávit — ganar músculo", pct:0.10,  protPerKg:1.8},
 ];
-const DEFAULT_PROFILE = { weight:88.7, height:175, age:30, sex:"M", activity:1.55, goal:"cut" };
+const DEFAULT_PROFILE = { weight:88.7, height:175, age:30, sex:"M", activity:1.55, goal:"cut", week:["legs","swim_easy","push","swim_hard","pull","rest","ride"] };
 // Adaptación de la rutina según el objetivo activo del perfil
 const GOAL_GUIDANCE = {
   cut:      { txt:"En déficit calórico: prioriza técnica sobre carga máxima. Si la fatiga es alta, baja 1 serie de accesorios (no de los compuestos principales) antes que bajar peso.", c:"#f59e0b" },
@@ -93,15 +94,57 @@ const ROUTINE = {
   },
 };
 
-const SCHEDULE = [
-  {lbl:"Lun",icon:"🏋️",key:"legs", title:"PIERNA",  sub:"Squat · RDL · Prensa",   color:"#f59e0b"},
-  {lbl:"Mar",icon:"🏊",key:"swim1",title:"NATACIÓN", sub:">1km técnica",            color:"#06b6d4"},
-  {lbl:"Mié",icon:"🏋️",key:"push", title:"PUSH",    sub:"Banca · OHP · Cable",     color:"#10b981"},
-  {lbl:"Jue",icon:"🏊",key:"swim2",title:"NATACIÓN", sub:">1km fondo",              color:"#06b6d4"},
-  {lbl:"Vie",icon:"🏋️",key:"pull", title:"PULL",    sub:"Remo · Polea · EZ Bar",   color:"#3b82f6"},
-  {lbl:"Sáb",icon:"🌙",key:"rest", title:"DESCANSO", sub:"Carb loading",            color:"#8b5cf6"},
-  {lbl:"Dom",icon:"🚴",key:"ride", title:"CICLISMO", sub:">50km Road",              color:"#f59e0b"},
-];
+// Catálogo de tipos de día. El horario semanal (qué día es qué) es personal —
+// vive en profile.week, no es fijo para todo el que use la app.
+const DAY_TYPES = {
+  legs:      {icon:"🏋️",title:"PIERNA",   sub:"Squat · RDL · Prensa",     color:"#f59e0b"},
+  push:      {icon:"🏋️",title:"PUSH",     sub:"Banca · OHP · Cable",      color:"#10b981"},
+  pull:      {icon:"🏋️",title:"PULL",     sub:"Remo · Polea · EZ Bar",    color:"#3b82f6"},
+  swim_easy: {icon:"🏊",title:"NATACIÓN", sub:">1km técnica",              color:"#06b6d4"},
+  swim_hard: {icon:"🏊",title:"NATACIÓN", sub:">1km fondo/intervalos",     color:"#06b6d4"},
+  ride:      {icon:"🚴",title:"CICLISMO", sub:"Ruta",                      color:"#f59e0b"},
+  rest:      {icon:"🌙",title:"DESCANSO", sub:"Recuperación",              color:"#8b5cf6"},
+  off:       {icon:"⬜",title:"LIBRE",    sub:"Sin plan asignado",         color:"#4e607a"},
+};
+const DAY_TYPE_LIST = Object.entries(DAY_TYPES).map(([k,v])=>({key:k,...v}));
+const DOW_LABELS = ["Lun","Mar","Mié","Jue","Vie","Sáb","Dom"];
+const DEFAULT_WEEK = ["legs","swim_easy","push","swim_hard","pull","rest","ride"];
+function buildSchedule(week) {
+  const w = (week?.length===7) ? week : DEFAULT_WEEK;
+  return w.map((key,i) => ({ lbl:DOW_LABELS[i], key, ...(DAY_TYPES[key]||DAY_TYPES.off) }));
+}
+function liftDaysPerWeek(week) {
+  const w = (week?.length===7) ? week : DEFAULT_WEEK;
+  return w.filter(k=>ROUTINE[k]).length;
+}
+
+// Sugiere un horario de 7 días a partir de cuántos días de cada actividad quiere
+// la persona. Sigue usando la plantilla PPL fija (legs/push/pull) — solo decide
+// en qué días caen, repartiéndolos lo más parejo posible en la semana.
+function suggestWeek({liftDays=3, swimDays=0, rideDays=0}) {
+  liftDays = Math.max(3, Math.min(6, liftDays));
+  const liftCycle = ["legs","push","pull"];
+  let liftEntries = Array.from({length:liftDays},(_,i)=>liftCycle[i%3]);
+  let cardioEntries = [];
+  for (let i=0;i<swimDays;i++) cardioEntries.push(i%2===0?"swim_easy":"swim_hard");
+  for (let i=0;i<rideDays;i++) cardioEntries.push("ride");
+  while (liftEntries.length+cardioEntries.length>7 && cardioEntries.length>0) cardioEntries.pop();
+  while (liftEntries.length+cardioEntries.length>7 && liftEntries.length>3) liftEntries.pop();
+
+  const week = Array(7).fill(null);
+  const used = new Set();
+  liftEntries.forEach((type,i)=>{
+    let idx = Math.round(i*7/liftEntries.length);
+    while (used.has(idx)) idx = (idx+1)%7;
+    used.add(idx); week[idx]=type;
+  });
+  let ci=0;
+  for (let d=0; d<7 && ci<cardioEntries.length; d++){
+    if (week[d]==null){ week[d]=cardioEntries[ci]; used.add(d); ci++; }
+  }
+  for (let d=0; d<7; d++) if (week[d]==null) week[d]="rest";
+  return week;
+}
 
 // ── Embedded exercise info (sin dependencia de API) ───────────────────────────
 const EX_DB = {
@@ -192,23 +235,9 @@ const weekOf = d => { const m=addDays(d,-dow(d)); return Array.from({length:7},(
 const fmt    = d => d.toLocaleDateString("es-CO",{day:"2-digit",month:"short"});
 const repsRange = str => { const n=(str.match(/\d+/g)||[]).map(Number); return {lo:n[0]||0,hi:n[n.length-1]||n[0]||0}; };
 
-// ── Storage (localStorage) ────────────────────────────────────────────────────
-const store = {
-  get: async (k) => {
-    try { const v=localStorage.getItem(k); return v?JSON.parse(v):null; } catch { return null; }
-  },
-  set: async (k,v) => {
-    try { localStorage.setItem(k,JSON.stringify(v)); } catch {}
-  },
-};
-
-// ── Backup manual (export/import de todo localStorage) ────────────────────────
-function exportBackup() {
-  const dump = {};
-  for (let i=0;i<localStorage.length;i++) {
-    const k = localStorage.key(i);
-    try { dump[k] = JSON.parse(localStorage.getItem(k)); } catch { dump[k] = localStorage.getItem(k); }
-  }
+// ── Backup manual (export/import — ahora vía API, no localStorage) ────────────
+async function exportBackup() {
+  const dump = await exportBundleFromApi();
   const blob = new Blob([JSON.stringify(dump,null,2)], {type:"application/json"});
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -218,10 +247,10 @@ function exportBackup() {
 }
 function importBackup(file, onDone) {
   const reader = new FileReader();
-  reader.onload = () => {
+  reader.onload = async () => {
     try {
       const dump = JSON.parse(reader.result);
-      Object.entries(dump).forEach(([k,v]) => localStorage.setItem(k, typeof v==="string"?v:JSON.stringify(v)));
+      await api.importDump(dump);
       onDone?.(true);
     } catch { onDone?.(false); }
   };
@@ -229,15 +258,6 @@ function importBackup(file, onDone) {
 }
 
 // ── Log de ejercicio ejecutado (sobrecarga progresiva) ─────────────────────────
-const logKey = name => `exlog:${name}`;
-async function loadExLog(name) { return (await store.get(logKey(name))) || []; }
-async function saveExLog(name, sets) {
-  const hist = await loadExLog(name);
-  const entry = { date: toKey(today()), sets };
-  const updated = [...hist.filter(h=>h.date!==entry.date), entry].sort((a,b)=>a.date.localeCompare(b.date));
-  await store.set(logKey(name), updated);
-  return updated;
-}
 function suggestProgression(last, repRange) {
   if (!last) return null;
   const { hi, lo } = repRange;
@@ -251,20 +271,13 @@ function suggestProgression(last, repRange) {
   return { txt:`Repite ${w}kg, busca 1 rep más por serie`, c:T.blue };
 }
 
-// ── Analítica de entrenamiento (agrega todos los exlog:*) ──────────────────────
-const LIFT_DAYS_PER_WEEK = 3; // legs/push/pull programados
-function scanExerciseLogs() {
-  const out = {};
-  for (let i=0;i<localStorage.length;i++) {
-    const k = localStorage.key(i);
-    if (!k || !k.startsWith("exlog:")) continue;
-    try { const v = JSON.parse(localStorage.getItem(k)); if (v?.length) out[k.slice(6)] = v; } catch {}
-  }
-  return out;
+// ── Analítica de entrenamiento (agrega todo el historial vía API) ─────────────
+async function scanExerciseLogs() {
+  try { return await api.getExLog(); } catch { return {}; }
 }
 const e1rm = (w,r) => Math.round(w*(1+Math.max(r,0)/30)*10)/10; // Epley
 
-function buildAnalytics(logs) {
+function buildAnalytics(logs, liftDays) {
   const names = Object.keys(logs);
   // Volumen semanal (tonelaje = Σ peso×reps), últimas 8 semanas con datos
   const volByWeek = {};
@@ -289,7 +302,7 @@ function buildAnalytics(logs) {
   const wkStart = toKey(addDays(today(),-dow(today())));
   const sessionsThisWeek = new Set();
   names.forEach(n => logs[n].forEach(s => { if (s.date>=wkStart) sessionsThisWeek.add(s.date); }));
-  const adherence = Math.min(100, Math.round(sessionsThisWeek.size/LIFT_DAYS_PER_WEEK*100));
+  const adherence = Math.min(100, Math.round(sessionsThisWeek.size/(liftDays||3)*100));
   return { names, weeks, prs, adherence, sessionsThisWeek: sessionsThisWeek.size };
 }
 
@@ -318,14 +331,8 @@ function expectedWeeklySets() {
   return exp;
 }
 
-function scanMealLogs() {
-  const out = {};
-  for (let i=0;i<localStorage.length;i++) {
-    const k = localStorage.key(i);
-    if (!k || !k.startsWith("meals:")) continue;
-    try { const v = JSON.parse(localStorage.getItem(k)); if (v?.length) out[k.slice(6)] = v; } catch {}
-  }
-  return out;
+async function scanMealLogs() {
+  try { return await api.getMeals(); } catch { return {}; }
 }
 
 function buildRecommendations({logs, meals, targets}) {
@@ -534,7 +541,8 @@ const Ring = ({val,max}) => {
 };
 
 // ── Week Nav shared component ─────────────────────────────────────────────────
-function WeekNav({selDate, onSelect}) {
+function WeekNav({selDate, onSelect, schedule}) {
+  const sched = schedule || buildSchedule();
   const [ws,setWs] = useState(()=>addDays(selDate,-dow(selDate)));
   const days = useMemo(()=>Array.from({length:7},(_,i)=>addDays(ws,i)),[ws]);
   const td   = today();
@@ -547,7 +555,7 @@ function WeekNav({selDate, onSelect}) {
       </div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:4}}>
         {days.map((d,i)=>{
-          const s=SCHEDULE[i],isSel=sameDay(d,selDate),isTod=sameDay(d,td);
+          const s=sched[i],isSel=sameDay(d,selDate),isTod=sameDay(d,td);
           return (
             <button key={i} onClick={()=>onSelect(d)}
               style={{background:isSel?s.color+"33":"none",border:`2px solid ${isSel?s.color:isTod?T.muted+"55":T.border}`,
@@ -561,7 +569,7 @@ function WeekNav({selDate, onSelect}) {
         })}
       </div>
       <div style={{marginTop:7,textAlign:"center",fontSize:9,color:T.muted}}>
-        {fmt(selDate)} — {SCHEDULE[dow(selDate)].icon} <span style={{color:SCHEDULE[dow(selDate)].color,fontWeight:700}}>{SCHEDULE[dow(selDate)].title}</span> · {SCHEDULE[dow(selDate)].sub}
+        {fmt(selDate)} — {sched[dow(selDate)].icon} <span style={{color:sched[dow(selDate)].color,fontWeight:700}}>{sched[dow(selDate)].title}</span> · {sched[dow(selDate)].sub}
       </div>
     </div>
   );
@@ -692,10 +700,9 @@ function SwapDrawer({slot,color,onSwap,onClose}) {
 }
 
 // ── Exercise Card ─────────────────────────────────────────────────────────────
-function ExCard({slot,override,color,onSwap,onDetail,onLog,logVersion}) {
+function ExCard({slot,override,color,onSwap,onDetail,onLog,history}) {
   const name=override?.name||slot.name;
-  const [last,setLast]=useState(null);
-  useEffect(()=>{ let alive=true; loadExLog(name).then(h=>{ if(alive) setLast(h[h.length-1]||null); }); return ()=>{alive=false}; },[name,logVersion]);
+  const last = history?.length ? history[history.length-1] : null;
   const suggestion = suggestProgression(last, repsRange(slot.reps));
   return (
     <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 10px",display:"flex",flexDirection:"column",gap:6,position:"relative",overflow:"hidden"}}>
@@ -734,23 +741,20 @@ function ExCard({slot,override,color,onSwap,onDetail,onLog,logVersion}) {
 }
 
 // ── Log Drawer (registrar series ejecutadas) ───────────────────────────────────
-function LogDrawer({slot,override,color,onClose,onSaved}) {
+function LogDrawer({slot,override,color,onClose,onSaved,history}) {
   const name=override?.name||slot.name;
-  const [rows,setRows]=useState(()=>Array.from({length:slot.sets},()=>({weight:"",reps:"",rpe:""})));
-  const [loaded,setLoaded]=useState(false);
-  useEffect(()=>{
-    loadExLog(name).then(h=>{
-      const prev=h[h.length-1];
-      if(prev?.sets?.length) setRows(prev.sets.map(s=>({weight:s.weight??"",reps:s.reps??"",rpe:s.rpe??""})));
-      setLoaded(true);
-    });
-  },[name]);
+  const prevSets = history?.length ? history[history.length-1]?.sets : null;
+  const [rows,setRows]=useState(()=> prevSets?.length
+    ? prevSets.map(s=>({weight:s.weight??"",reps:s.reps??"",rpe:s.rpe??""}))
+    : Array.from({length:slot.sets},()=>({weight:"",reps:"",rpe:""})));
+  const [saving,setSaving]=useState(false);
   function setRow(i,field,v){ setRows(r=>r.map((row,idx)=>idx===i?{...row,[field]:v}:row)); }
   async function save(){
     const sets=rows.map(r=>({weight:parseFloat(r.weight)||0,reps:parseInt(r.reps)||0,rpe:r.rpe?parseFloat(r.rpe):null})).filter(s=>s.weight||s.reps);
     if(!sets.length){ onClose(); return; }
-    await saveExLog(name,sets);
-    onSaved?.(); onClose();
+    setSaving(true);
+    try { await api.saveExLog(name, toKey(today()), sets); onSaved?.(); onClose(); }
+    finally { setSaving(false); }
   }
   return (
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.8)",zIndex:250,display:"flex",alignItems:"flex-end"}} onClick={onClose}>
@@ -762,7 +766,7 @@ function LogDrawer({slot,override,color,onClose,onSaved}) {
           </div>
           <button onClick={onClose} style={{background:"none",border:"none",color:T.muted,fontSize:20,cursor:"pointer"}}>✕</button>
         </div>
-        <div style={{fontSize:9,color:T.muted,marginBottom:10}}>Objetivo: {slot.sets} series × {slot.reps} reps · {loaded?"prefill con tu última sesión":"cargando…"}</div>
+        <div style={{fontSize:9,color:T.muted,marginBottom:10}}>Objetivo: {slot.sets} series × {slot.reps} reps{prevSets?.length?" · prefill con tu última sesión":""}</div>
         <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:14}}>
           {rows.map((row,i)=>(
             <div key={i} style={{display:"flex",gap:6,alignItems:"center"}}>
@@ -777,8 +781,8 @@ function LogDrawer({slot,override,color,onClose,onSaved}) {
             </div>
           ))}
         </div>
-        <button onClick={save} style={{width:"100%",background:color+"22",border:`1px solid ${color}55`,borderRadius:8,padding:"10px",color,fontSize:11,fontWeight:700,textTransform:"uppercase",cursor:"pointer"}}>
-          ✓ Guardar sesión
+        <button onClick={save} disabled={saving} style={{width:"100%",background:color+"22",border:`1px solid ${color}55`,borderRadius:8,padding:"10px",color,fontSize:11,fontWeight:700,textTransform:"uppercase",cursor:saving?"default":"pointer"}}>
+          {saving?"Guardando…":"✓ Guardar sesión"}
         </button>
       </div>
     </div>
@@ -787,13 +791,20 @@ function LogDrawer({slot,override,color,onClose,onSaved}) {
 
 // ── Day content ───────────────────────────────────────────────────────────────
 const DAY_INFO = {
-  swim1:{icon:"🏊",title:"Natación · Martes",color:"#06b6d4",items:["Objetivo: >1 km, técnica y pace controlado","Enfócate en stroke mechanics, no en velocidad máxima","Útil: pull buoy + aletas para segmentos de técnica","Intensidad: 65–70% FCmax — recuperación activa","Hidratación: mínimo 500ml antes de entrar al agua"]},
-  swim2:{icon:"🏊",title:"Natación · Jueves",color:"#06b6d4",items:["Objetivo: >1 km — puede ser más intenso que el martes","Variación: intervalos 100m o 200m con descanso activo","Intensidad: 70–80% FCmax — fuerza aeróbica","Este es el 'harder swim' de la semana","Deja espacio para recuperar el viernes (PULL)"]},
-  rest:{icon:"🌙",title:"Sábado · Sacred Rest",color:"#8b5cf6",items:["Descanso total — sin entrenamiento de ningún tipo","Carb loading: 6–8g carbos por kg de peso corporal","Dormir ≥8 horas — la noche antes del ciclismo es crítica","Hidratación activa: 3–4L agua + electrolitos","Preparar el kit de ciclismo para el domingo"]},
-  ride:{icon:"🚴",title:"Domingo · Ciclismo",color:"#f59e0b",items:[">50 km en ruta — ritmo conversacional en Z2","Ritmo: 65–75% FCmax para desarrollo aeróbico de base","Nutrición en bici: 60g carbos/hora después de 45 min","Hidratación: 500–750ml/hora según el calor de Medellín","Post-ride: proteína + carbos dentro de los 30 minutos"]},
+  swim_easy:{icon:"🏊",title:"Natación · Técnica",color:"#06b6d4",items:["Objetivo: >1 km, técnica y pace controlado","Enfócate en stroke mechanics, no en velocidad máxima","Útil: pull buoy + aletas para segmentos de técnica","Intensidad: 65–70% FCmax — recuperación activa","Hidratación: mínimo 500ml antes de entrar al agua"]},
+  swim_hard:{icon:"🏊",title:"Natación · Fondo/Intervalos",color:"#06b6d4",items:["Objetivo: >1 km — el swim más intenso de la semana","Variación: intervalos 100m o 200m con descanso activo","Intensidad: 70–80% FCmax — fuerza aeróbica","Deja espacio para recuperar antes del próximo día de pesas"]},
+  rest:{icon:"🌙",title:"Descanso",color:"#8b5cf6",items:["Descanso total — sin entrenamiento de ningún tipo","Carb loading: 6–8g carbos por kg de peso corporal si el día siguiente es intenso","Dormir ≥8 horas","Hidratación activa: 3–4L agua + electrolitos"]},
+  ride:{icon:"🚴",title:"Ciclismo",color:"#f59e0b",items:[">50 km en ruta — ritmo conversacional en Z2","Ritmo: 65–75% FCmax para desarrollo aeróbico de base","Nutrición en bici: 60g carbos/hora después de 45 min","Hidratación: 500–750ml/hora según el calor","Post-ride: proteína + carbos dentro de los 30 minutos"]},
+  off:{icon:"⬜",title:"Día libre",color:"#4e607a",items:["Sin plan asignado para este día — configúralo en Perfil → Horario semanal si quieres asignarle una actividad."]},
+};
+// Nota por objetivo también para los días de cardio (no solo pesas)
+const CARDIO_GOAL_NOTE = {
+  cut:      { txt:"En déficit: no compenses el cardio comiendo de más — mantén la intensidad prescrita, no la subas por tu cuenta.", c:"#f59e0b" },
+  maintain: { txt:"En mantenimiento: este cardio es para salud/rendimiento, no para crear un déficit extra.", c:"#3b82f6" },
+  bulk:     { txt:"En superávit: tienes energía de sobra — es un buen momento para trabajar técnica o volumen aeróbico sin miedo a quedarte corto de combustible.", c:"#10b981" },
 };
 
-function DayContent({dayKey,swaps,onSwap,onDetail,onLog,logVersion,color,goal}) {
+function DayContent({dayKey,swaps,onSwap,onDetail,onLog,allLogs,color,goal}) {
   const routine=ROUTINE[dayKey];
   const guidance = GOAL_GUIDANCE[goal];
   if(routine) return (
@@ -825,9 +836,11 @@ function DayContent({dayKey,swaps,onSwap,onDetail,onLog,logVersion,color,goal}) 
         </div>
       )}
       <div style={{display:"flex",flexDirection:"column",gap:6}}>
-        {routine.slots.map(slot=>(
-          <ExCard key={slot.id} slot={slot} override={swaps[slot.id]||null} color={color} onSwap={onSwap} onDetail={onDetail} onLog={onLog} logVersion={logVersion}/>
-        ))}
+        {routine.slots.map(slot=>{
+          const override = swaps[slot.id]||null;
+          const name = override?.name||slot.name;
+          return <ExCard key={slot.id} slot={slot} override={override} color={color} onSwap={onSwap} onDetail={onDetail} onLog={onLog} history={allLogs?.[name]}/>;
+        })}
       </div>
       {Object.keys(swaps).length>0&&(
         <div style={{marginTop:10,textAlign:"center"}}>
@@ -838,10 +851,11 @@ function DayContent({dayKey,swaps,onSwap,onDetail,onLog,logVersion,color,goal}) 
   );
   const info=DAY_INFO[dayKey];
   if(!info) return null;
+  const cardioNote = dayKey!=="off" ? CARDIO_GOAL_NOTE[goal] : null;
   return (
     <div style={{background:T.card,border:`1px solid ${info.color}33`,borderRadius:12,padding:16}}>
       <div style={{fontFamily:"Impact,sans-serif",fontSize:20,color:"#fff",marginBottom:12}}>{info.icon} {info.title}</div>
-      <div style={{display:"flex",flexDirection:"column",gap:8}}>
+      <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:cardioNote?12:0}}>
         {info.items.map((item,i)=>(
           <div key={i} style={{display:"flex",gap:10,alignItems:"flex-start"}}>
             <div style={{width:20,height:20,background:info.color+"22",border:`1px solid ${info.color}44`,borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontSize:9,fontWeight:700,color:info.color}}>{i+1}</div>
@@ -849,12 +863,18 @@ function DayContent({dayKey,swaps,onSwap,onDetail,onLog,logVersion,color,goal}) 
           </div>
         ))}
       </div>
+      {cardioNote&&(
+        <div style={{background:cardioNote.c+"11",border:`1px solid ${cardioNote.c}33`,borderRadius:8,padding:"8px 12px",fontSize:10,color:cardioNote.c}}>
+          🎯 {cardioNote.txt}
+        </div>
+      )}
     </div>
   );
 }
 
 // ── WORKOUT MODULE ────────────────────────────────────────────────────────────
-function WorkoutModule({goal}) {
+function WorkoutModule({goal,week}) {
+  const schedule=useMemo(()=>buildSchedule(week),[week]);
   const [selDate,setSelDate]=useState(today());
   const [swaps,setSwaps]=useState({});
   const [swapTarget,setSwapTarget]=useState(null);
@@ -862,8 +882,10 @@ function WorkoutModule({goal}) {
   const [detailId,setDetailId]=useState(null);
   const [detailName,setDetailName]=useState("");
   const [logTarget,setLogTarget]=useState(null);
+  const [allLogs,setAllLogs]=useState({});
   const [logVersion,setLogVersion]=useState(0);
-  const sched=SCHEDULE[dow(selDate)];
+  useEffect(()=>{ api.getExLog().then(setAllLogs).catch(()=>{}); },[logVersion]);
+  const sched=schedule[dow(selDate)];
   function handleSwap(slot){setSwapTarget({slot,color:sched.color});}
   function applySwap(slotId,ex){setSwaps(s=>({...s,[slotId]:ex}));setSwapTarget(null);}
   function openDetail(slotId, wgerId, name){setDetailSlotId(slotId);setDetailId(wgerId);setDetailName(name);}
@@ -871,8 +893,8 @@ function WorkoutModule({goal}) {
   function handleLog(slot,override){setLogTarget({slot,override});}
   return (
     <div>
-      <WeekNav selDate={selDate} onSelect={setSelDate}/>
-      <DayContent dayKey={sched.key} swaps={swaps} onSwap={handleSwap} onDetail={openDetail} onLog={handleLog} logVersion={logVersion} color={sched.color} goal={goal}/>
+      <WeekNav selDate={selDate} onSelect={setSelDate} schedule={schedule}/>
+      <DayContent dayKey={sched.key} swaps={swaps} onSwap={handleSwap} onDetail={openDetail} onLog={handleLog} allLogs={allLogs} color={sched.color} goal={goal}/>
       {swapTarget&&<SwapDrawer slot={swapTarget.slot} color={swapTarget.color} onSwap={applySwap} onClose={()=>setSwapTarget(null)}/>}
       {/* Abre siempre que haya slotId (datos locales) o exId (wger) */}
       {(detailSlotId||detailId)&&(
@@ -880,6 +902,7 @@ function WorkoutModule({goal}) {
       )}
       {logTarget&&(
         <LogDrawer slot={logTarget.slot} override={logTarget.override} color={sched.color}
+          history={allLogs?.[logTarget.override?.name||logTarget.slot.name]}
           onClose={()=>setLogTarget(null)} onSaved={()=>setLogVersion(v=>v+1)}/>
       )}
     </div>
@@ -897,7 +920,7 @@ function NutritionModule({selDate,targets}) {
   const [pick,setPick]=useState(null);
   const [grams,setGrams]=useState(100);
   const [open,setOpen]=useState(false);
-  useEffect(()=>{store.get(`meals:${key}`).then(v=>setMeals(v||[]));setOpen(false);setResults([]);setQ("");setPick(null);},[key]);
+  useEffect(()=>{api.getMealsByDate(key).then(v=>setMeals(v||[])).catch(()=>setMeals([]));setOpen(false);setResults([]);setQ("");setPick(null);},[key]);
   const search=useCallback(async()=>{
     if(!q.trim())return; setBusy(true); setResults([]);
     const [u,o]=await Promise.all([searchUSDA(q),searchOFF(q)]);
@@ -908,11 +931,12 @@ function NutritionModule({selDate,targets}) {
   const mFor=(f,g)=>({kcal:Math.round(f.per100.kcal*g/100),protein:Math.round(f.per100.protein*g/100*10)/10,carbs:Math.round(f.per100.carbs*g/100*10)/10,fat:Math.round(f.per100.fat*g/100*10)/10});
   async function add(){
     if(!pick)return;
-    const m={id:Date.now(),type:addTo,name:pick.name,src:pick.src,grams,...mFor(pick,grams)};
-    const u=[...meals,m]; setMeals(u); await store.set(`meals:${key}`,u);
+    const m={date:key,type:addTo,name:pick.name,src:pick.src,grams,...mFor(pick,grams)};
+    const {id}=await api.addMeal(m);
+    setMeals(ms=>[...ms,{...m,id}]);
     setPick(null); setQ(""); setResults([]); setOpen(false);
   }
-  async function del(id){const u=meals.filter(m=>m.id!==id);setMeals(u);await store.set(`meals:${key}`,u);}
+  async function del(id){ await api.deleteMeal(id); setMeals(ms=>ms.filter(m=>m.id!==id)); }
   const tot=useMemo(()=>meals.reduce((a,m)=>({kcal:a.kcal+(m.kcal||0),protein:a.protein+(m.protein||0),carbs:a.carbs+(m.carbs||0),fat:a.fat+(m.fat||0)}),{kcal:0,protein:0,carbs:0,fat:0}),[meals]);
   return (
     <div>
@@ -1007,16 +1031,17 @@ function ProgressModule({profile,setProfile}) {
   const [data,setData]=useState([]);
   const [form,setForm]=useState({weight:"",fat:"",muscle:""});
   const [ok,setOk]=useState(false);
-  useEffect(()=>{store.get("metrics").then(v=>setData(v||[]));},[]);
+  useEffect(()=>{api.getMetrics().then(v=>setData(v||[])).catch(()=>setData([]));},[]);
   async function save(){
     if(!form.weight)return;
     const e={date:toKey(today()),weight:parseFloat(form.weight),fat:parseFloat(form.fat)||null,muscle:parseFloat(form.muscle)||null};
+    await api.saveMetric(e);
     const u=[...data.filter(d=>d.date!==e.date),e].sort((a,b)=>a.date.localeCompare(b.date));
-    setData(u); await store.set("metrics",u);
+    setData(u);
     // sincroniza el peso más reciente con el perfil para que TDEE/macros se recalculen
     if(profile&&setProfile){
       const p={...profile,weight:e.weight};
-      setProfile(p); await store.set("profile",p);
+      setProfile(p); await api.saveProfile(p);
     }
     setForm({weight:"",fat:"",muscle:""}); setOk(true); setTimeout(()=>setOk(false),2000);
   }
@@ -1107,6 +1132,57 @@ function ProgressModule({profile,setProfile}) {
 }
 
 // ── PROFILE MODULE ────────────────────────────────────────────────────────────
+const selStyle={width:"100%",background:T.surface,border:`1px solid ${T.border}`,borderRadius:6,padding:"6px 8px",color:T.white,fontSize:12,outline:"none",fontFamily:T.font};
+
+// ── Asistente de horario: sugiere profile.week a partir de unas pocas preguntas
+function ScheduleWizard({onApply}) {
+  const [liftDays,setLiftDays]=useState(3);
+  const [swimDays,setSwimDays]=useState(2);
+  const [rideDays,setRideDays]=useState(1);
+  const [applied,setApplied]=useState(false);
+  const preview = useMemo(()=>suggestWeek({liftDays,swimDays,rideDays}),[liftDays,swimDays,rideDays]);
+  return (
+    <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:10,padding:14,marginBottom:12}}>
+      <div style={{fontSize:9,fontWeight:700,letterSpacing:2,color:T.muted,textTransform:"uppercase",marginBottom:8}}>🧭 Sugerir horario</div>
+      <div style={{fontSize:9,color:T.muted,marginBottom:10,lineHeight:1.6}}>Sigue siendo la plantilla pierna/push/pull — esto solo decide cómo se acomoda en tu semana según lo que quieras hacer. Puedes ajustar cualquier día a mano después.</div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:10}}>
+        <div>
+          <div style={{fontSize:8,color:T.muted,marginBottom:3}}>Días de pesas</div>
+          <select value={liftDays} onChange={e=>{setLiftDays(Number(e.target.value));setApplied(false);}} style={selStyle}>
+            {[3,4,5,6].map(n=><option key={n} value={n}>{n}</option>)}
+          </select>
+        </div>
+        <div>
+          <div style={{fontSize:8,color:T.muted,marginBottom:3}}>Días de natación</div>
+          <select value={swimDays} onChange={e=>{setSwimDays(Number(e.target.value));setApplied(false);}} style={selStyle}>
+            {[0,1,2,3].map(n=><option key={n} value={n}>{n}</option>)}
+          </select>
+        </div>
+        <div>
+          <div style={{fontSize:8,color:T.muted,marginBottom:3}}>Días de ciclismo</div>
+          <select value={rideDays} onChange={e=>{setRideDays(Number(e.target.value));setApplied(false);}} style={selStyle}>
+            {[0,1,2].map(n=><option key={n} value={n}>{n}</option>)}
+          </select>
+        </div>
+      </div>
+      <div style={{display:"flex",gap:4,marginBottom:10}}>
+        {preview.map((k,i)=>{
+          const dt=DAY_TYPES[k];
+          return (
+            <div key={i} style={{flex:1,textAlign:"center",background:dt.color+"15",border:`1px solid ${dt.color}33`,borderRadius:6,padding:"5px 2px"}}>
+              <div style={{fontSize:7,color:T.muted}}>{DOW_LABELS[i]}</div>
+              <div style={{fontSize:13}}>{dt.icon}</div>
+            </div>
+          );
+        })}
+      </div>
+      <button onClick={()=>{onApply(preview);setApplied(true);}} style={{width:"100%",background:T.cyan+"22",border:`1px solid ${T.cyan}55`,borderRadius:7,padding:"9px",color:T.cyan,fontSize:11,fontWeight:700,textTransform:"uppercase",cursor:"pointer"}}>
+        {applied?"✓ Aplicado — ajusta abajo y guarda":"Usar esta sugerencia"}
+      </button>
+    </div>
+  );
+}
+
 function ProfileModule({profile,setProfile}) {
   const [form,setForm]=useState(profile);
   const [saved,setSaved]=useState(false);
@@ -1115,7 +1191,7 @@ function ProfileModule({profile,setProfile}) {
   const targets = useMemo(()=>computeTargets(form),[form]);
   async function save(){
     const p={...form,weight:parseFloat(form.weight)||DEFAULT_PROFILE.weight,height:parseFloat(form.height)||DEFAULT_PROFILE.height,age:parseInt(form.age)||DEFAULT_PROFILE.age};
-    setProfile(p); await store.set("profile",p);
+    setProfile(p); await api.saveProfile(p);
     setSaved(true); setTimeout(()=>setSaved(false),2000);
   }
   return (
@@ -1175,6 +1251,25 @@ function ProfileModule({profile,setProfile}) {
           {saved?"✓ Guardado":"Guardar perfil"}
         </button>
       </div>
+      <ScheduleWizard onApply={week=>setForm(f=>({...f,week}))}/>
+      <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:10,padding:14,marginBottom:12}}>
+        <div style={{fontSize:9,fontWeight:700,letterSpacing:2,color:T.muted,textTransform:"uppercase",marginBottom:8}}>📅 Horario semanal</div>
+        <div style={{fontSize:9,color:T.muted,marginBottom:10,lineHeight:1.6}}>Es tuyo — no tiene por qué verse igual para alguien que quiera subir de peso o no nade. Asigna qué haces cada día; Rutina, Análisis y las recomendaciones se ajustan solas.</div>
+        <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:12}}>
+          {DOW_LABELS.map((lbl,i)=>(
+            <div key={i} style={{display:"flex",alignItems:"center",gap:8}}>
+              <span style={{width:30,fontSize:10,fontWeight:700,color:T.muted,flexShrink:0}}>{lbl}</span>
+              <select value={(form.week||DEFAULT_WEEK)[i]} onChange={e=>setForm(f=>{ const w=[...(f.week||DEFAULT_WEEK)]; w[i]=e.target.value; return {...f,week:w}; })}
+                style={{flex:1,background:T.surface,border:`1px solid ${T.border}`,borderRadius:6,padding:"6px 8px",color:T.white,fontSize:11,outline:"none",fontFamily:T.font}}>
+                {DAY_TYPE_LIST.map(dt=><option key={dt.key} value={dt.key}>{dt.icon} {dt.title} — {dt.sub}</option>)}
+              </select>
+            </div>
+          ))}
+        </div>
+        <button onClick={save} style={{width:"100%",background:T.purple+"22",border:`1px solid ${T.purple}55`,borderRadius:7,padding:"9px",color:T.purple,fontSize:11,fontWeight:700,textTransform:"uppercase",cursor:"pointer"}}>
+          {saved?"✓ Guardado":"Guardar horario"}
+        </button>
+      </div>
       <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:10,padding:14}}>
         <div style={{fontSize:9,fontWeight:700,letterSpacing:2,color:T.muted,textTransform:"uppercase",marginBottom:8}}>💾 Datos (respaldo local)</div>
         <div style={{fontSize:9,color:T.muted,marginBottom:10,lineHeight:1.6}}>Todo se guarda solo en este navegador. Exporta un respaldo antes de borrar caché o cambiar de dispositivo.</div>
@@ -1190,6 +1285,10 @@ function ProfileModule({profile,setProfile}) {
         </div>
         {impMsg&&<div style={{fontSize:9,color:T.muted,marginTop:8,textAlign:"center"}}>{impMsg}</div>}
       </div>
+      <button onClick={()=>api.logout().finally(()=>window.location.reload())}
+        style={{width:"100%",background:"none",border:`1px solid ${T.border}`,borderRadius:7,padding:"9px",color:T.muted,fontSize:10,fontWeight:700,textTransform:"uppercase",cursor:"pointer"}}>
+        Cerrar sesión
+      </button>
     </div>
   );
 }
@@ -1209,11 +1308,12 @@ function VolBar({week,vol,max,color}) {
   );
 }
 
-function AnalyticsModule({targets}) {
+function AnalyticsModule({targets,week}) {
   const [logs,setLogs] = useState(null);
   const [meals,setMeals] = useState(null);
-  useEffect(()=>{ setLogs(scanExerciseLogs()); setMeals(scanMealLogs()); },[]);
-  const { names, weeks, prs, adherence, sessionsThisWeek } = useMemo(()=>buildAnalytics(logs||{}),[logs]);
+  useEffect(()=>{ scanExerciseLogs().then(setLogs); scanMealLogs().then(setMeals); },[]);
+  const liftDays = useMemo(()=>liftDaysPerWeek(week),[week]);
+  const { names, weeks, prs, adherence, sessionsThisWeek } = useMemo(()=>buildAnalytics(logs||{},liftDays),[logs,liftDays]);
   const recs = useMemo(()=> (logs&&meals) ? buildRecommendations({logs,meals,targets}) : [], [logs,meals,targets]);
   if (!logs || !meals) return null;
 
@@ -1248,7 +1348,7 @@ function AnalyticsModule({targets}) {
         <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:9,padding:"10px 8px",textAlign:"center"}}>
           <div style={{fontSize:8,color:T.muted,letterSpacing:1.5,textTransform:"uppercase",marginBottom:3}}>Adherencia semana</div>
           <div style={{fontFamily:T.mono,fontSize:19,fontWeight:700,color:adherence>=100?T.green:adherence>=50?T.amber:T.red,lineHeight:1}}>{adherence}%</div>
-          <div style={{fontSize:8,color:T.muted}}>{sessionsThisWeek}/{LIFT_DAYS_PER_WEEK} días logueados</div>
+          <div style={{fontSize:8,color:T.muted}}>{sessionsThisWeek}/{liftDays} días logueados</div>
         </div>
         <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:9,padding:"10px 8px",textAlign:"center"}}>
           <div style={{fontSize:8,color:T.muted,letterSpacing:1.5,textTransform:"uppercase",marginBottom:3}}>Ejercicios con historial</div>
@@ -1299,11 +1399,11 @@ const TABS=[
   {id:"profile",  l:"Perfil",   i:"⚙️", c:"#8b5cf6"},
 ];
 
-export default function App() {
+function App() {
   const [tab,setTab]=useState("workout");
   const [nutDate,setNutDate]=useState(today());
   const [profile,setProfile]=useState(DEFAULT_PROFILE);
-  useEffect(()=>{ store.get("profile").then(p=>{ if(p) setProfile({...DEFAULT_PROFILE,...p}); }); },[]);
+  useEffect(()=>{ api.getProfile().then(p=>{ if(p) setProfile({...DEFAULT_PROFILE,...p}); }).catch(()=>{}); },[]);
   const targets = useMemo(()=>computeTargets(profile),[profile]);
   const accent=TABS.find(t=>t.id===tab)?.c||"#3b82f6";
   return (
@@ -1334,12 +1434,72 @@ export default function App() {
           </button>
         ))}
       </div>
-      {tab==="nutrition"&&<WeekNav selDate={nutDate} onSelect={setNutDate}/>}
-      {tab==="workout"  &&<WorkoutModule goal={profile.goal}/>}
+      {tab==="nutrition"&&<WeekNav selDate={nutDate} onSelect={setNutDate} schedule={buildSchedule(profile.week)}/>}
+      {tab==="workout"  &&<WorkoutModule goal={profile.goal} week={profile.week}/>}
       {tab==="nutrition"&&<NutritionModule selDate={nutDate} targets={targets}/>}
       {tab==="progress" &&<ProgressModule profile={profile} setProfile={setProfile}/>}
-      {tab==="analytics"&&<AnalyticsModule targets={targets}/>}
+      {tab==="analytics"&&<AnalyticsModule targets={targets} week={profile.week}/>}
       {tab==="profile"  &&<ProfileModule profile={profile} setProfile={setProfile}/>}
     </div>
   );
+}
+
+// ── AUTH GATE (registro/login antes de mostrar la app) ─────────────────────────
+function AuthGate({children}) {
+  const [status,setStatus]=useState("checking"); // checking | anon | authed
+  const [mode,setMode]=useState("login");
+  const [email,setEmail]=useState("");
+  const [password,setPassword]=useState("");
+  const [err,setErr]=useState("");
+  const [busy,setBusy]=useState(false);
+
+  useEffect(()=>{ api.me().then(()=>setStatus("authed")).catch(()=>setStatus("anon")); },[]);
+
+  async function submit(e){
+    e.preventDefault(); setErr(""); setBusy(true);
+    try {
+      if (mode==="signup") await api.signup(email.trim().toLowerCase(),password);
+      else await api.login(email.trim().toLowerCase(),password);
+      setStatus("authed");
+    } catch(ex){ setErr(ex.message||"Algo salió mal."); }
+    finally { setBusy(false); }
+  }
+
+  if (status==="checking") return (
+    <div style={{background:T.bg,minHeight:"100vh"}}/>
+  );
+  if (status==="authed") return children;
+
+  return (
+    <div style={{background:T.bg,color:T.white,fontFamily:T.font,minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+      <form onSubmit={submit} style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:14,padding:24,width:"min(340px,100%)",boxSizing:"border-box"}}>
+        <div style={{fontFamily:"Impact,'Arial Narrow',sans-serif",fontSize:22,letterSpacing:2,color:"#fff",textAlign:"center",marginBottom:4}}>FITNESS HQ</div>
+        <div style={{fontSize:10,color:T.muted,textAlign:"center",marginBottom:18,textTransform:"uppercase",letterSpacing:1}}>{mode==="login"?"Inicia sesión":"Crea tu cuenta"}</div>
+        <input type="email" required autoComplete="username" placeholder="Email" value={email} onChange={e=>setEmail(e.target.value)}
+          style={{width:"100%",background:T.surface,border:`1px solid ${T.border}`,borderRadius:6,padding:"9px 10px",color:T.white,fontSize:13,marginBottom:8,outline:"none",boxSizing:"border-box",fontFamily:T.font}}/>
+        <input type="password" required minLength={8} autoComplete={mode==="login"?"current-password":"new-password"}
+          placeholder="Contraseña (mín. 8 caracteres)" value={password} onChange={e=>setPassword(e.target.value)}
+          style={{width:"100%",background:T.surface,border:`1px solid ${T.border}`,borderRadius:6,padding:"9px 10px",color:T.white,fontSize:13,marginBottom:12,outline:"none",boxSizing:"border-box",fontFamily:T.font}}/>
+        {err&&<div style={{fontSize:10,color:T.red,marginBottom:10,lineHeight:1.5}}>{err}</div>}
+        <button type="submit" disabled={busy} style={{width:"100%",background:T.blue+"22",border:`1px solid ${T.blue}55`,borderRadius:7,padding:"10px",color:T.blue,fontSize:11,fontWeight:700,textTransform:"uppercase",cursor:busy?"default":"pointer",marginBottom:12}}>
+          {busy?"…":mode==="login"?"Entrar":"Crear cuenta"}
+        </button>
+        <div style={{textAlign:"center",fontSize:10,color:T.muted}}>
+          {mode==="login"?"¿No tienes cuenta? ":"¿Ya tienes cuenta? "}
+          <span onClick={()=>{setMode(m=>m==="login"?"signup":"login");setErr("");}} style={{color:T.cyan,cursor:"pointer",fontWeight:700}}>
+            {mode==="login"?"Regístrate":"Inicia sesión"}
+          </span>
+        </div>
+        {mode==="signup"&&(
+          <div style={{fontSize:8,color:T.muted,textAlign:"center",marginTop:12,lineHeight:1.5}}>
+            No hay recuperación de contraseña automática todavía — guárdala bien.
+          </div>
+        )}
+      </form>
+    </div>
+  );
+}
+
+export default function AppRoot() {
+  return <AuthGate><App/></AuthGate>;
 }
