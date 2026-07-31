@@ -68,10 +68,12 @@ export async function parseFood(env, text) {
         role: "system",
         content: [
           "Extraes alimentos de una frase en español y devuelves JSON.",
-          "Para cada alimento das su nombre genérico en singular y una estimación de gramos.",
+          "Para cada alimento das: 'nombre' (en español, genérico, singular),",
+          "'busqueda' (el mismo alimento en INGLÉS y en términos genéricos de base de datos nutricional,",
+          "ej. chicharrón → 'pork rinds', arepa → 'corn cake', panela → 'raw cane sugar'),",
+          "y 'gramos' (estimación de la porción).",
           "NUNCA devuelvas calorías, proteínas ni macros: eso se consulta en una base de datos aparte.",
           "Si la persona no dice cantidad, estima una porción típica en gramos.",
-          "Usa nombres simples y buscables (ej. 'pechuga de pollo', 'arroz blanco', 'aguacate').",
           "Si la frase no contiene comida, devuelve una lista vacía.",
         ].join(" "),
       },
@@ -89,9 +91,10 @@ export async function parseFood(env, text) {
               type: "object",
               properties: {
                 nombre: { type: "string" },
+                busqueda: { type: "string" },
                 gramos: { type: "number" },
               },
-              required: ["nombre", "gramos"],
+              required: ["nombre", "busqueda", "gramos"],
             },
           },
         },
@@ -115,6 +118,8 @@ export async function parseFood(env, text) {
     .filter(it => it && typeof it.nombre === "string" && it.nombre.trim())
     .map(it => ({
       nombre: it.nombre.trim().slice(0, 80),
+      // término en inglés para USDA (que no entiende español) y para OFF
+      busqueda: (typeof it.busqueda === "string" && it.busqueda.trim() ? it.busqueda : it.nombre).trim().slice(0, 80),
       gramos: Math.max(1, Math.min(2000, Math.round(Number(it.gramos) || 100))),
     }))
     .slice(0, 10);

@@ -860,6 +860,25 @@ const macrosFor = (f,g) => ({
   fat: Math.round(f.per100.fat*g/100*10)/10,
 });
 
+// Quita tildes: USDA no las maneja y OFF a veces tampoco.
+const deaccent = s => (s||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"");
+
+// Prueba varios términos hasta encontrar el alimento. USDA está en inglés, así
+// que el término que da el modelo ("pork rinds" para chicharrón) suele ser el
+// que salva la búsqueda. Secuencial para no gatillar el rate limit de OFF.
+async function resolveFood(terms) {
+  const seen = new Set();
+  for (const raw of terms) {
+    const term = (raw||"").trim();
+    if (!term || seen.has(term.toLowerCase())) continue;
+    seen.add(term.toLowerCase());
+    const [u,o] = await Promise.all([searchUSDA(term), searchOFF(term)]);
+    const options = [...u,...o].filter(f=>f.per100?.kcal>0).slice(0,6);
+    if (options.length) return { options, usedTerm: term };
+  }
+  return { options: [], usedTerm: null };
+}
+
 // ── Registro de comida en lenguaje natural ────────────────────────────────────
 // El LLM SOLO identifica qué comiste y cuántos gramos. Los macros se resuelven
 // después contra USDA/Open Food Facts, y nada se guarda sin que confirmes.
@@ -877,12 +896,12 @@ function NaturalFoodEntry({date, onAdded}) {
     try {
       const { items } = await api.parseFood(text);
       if(!items?.length){ setErr("No identifiqué ningún alimento en esa frase."); return; }
-      // Para cada alimento, buscar macros reales en las bases de datos
-      const resolved = await Promise.all(items.map(async it => {
-        const [u,o] = await Promise.all([searchUSDA(it.nombre), searchOFF(it.nombre)]);
-        const options = [...u, ...o].filter(f=>f.per100?.kcal>0).slice(0,6);
-        return { ...it, options, pickIdx: options.length?0:-1 };
-      }));
+      // Secuencial a propósito: Open Food Facts limita búsquedas concurrentes.
+      const resolved = [];
+      for (const it of items) {
+        const { options, usedTerm } = await resolveFood([it.nombre, deaccent(it.nombre), it.busqueda]);
+        resolved.push({ ...it, options, usedTerm, pickIdx: options.length?0:-1, retry:"" });
+      }
       setDrafts(resolved);
     } catch(e){ setErr(e.message||"No se pudo interpretar el texto."); }
     finally { setBusy(false); }
@@ -890,6 +909,16 @@ function NaturalFoodEntry({date, onAdded}) {
 
   function update(i, patch){ setDrafts(d=>d.map((x,idx)=>idx===i?{...x,...patch}:x)); }
   function remove(i){ setDrafts(d=>d.filter((_,idx)=>idx!==i)); }
+
+  // Reintento manual cuando ninguna variante encontró el alimento
+  async function retrySearch(i){
+    const term = drafts[i].retry?.trim();
+    if(!term) return;
+    update(i,{searching:true});
+    const { options, usedTerm } = await resolveFood([term, deaccent(term)]);
+    update(i,{options, usedTerm, pickIdx: options.length?0:-1, searching:false,
+      notFound: options.length?false:true});
+  }
 
   async function saveAll(){
     const valid = (drafts||[]).filter(d=>d.pickIdx>=0 && d.options[d.pickIdx]);
@@ -945,6 +974,9 @@ function NaturalFoodEntry({date, onAdded}) {
                 </div>
                 {f ? (
                   <>
+                    {d.usedTerm&&deaccent(d.usedTerm).toLowerCase()!==deaccent(d.nombre).toLowerCase()&&(
+                      <div style={{fontSize:8,color:T.muted,marginBottom:4}}>buscado como "{d.usedTerm}"</div>
+                    )}
                     <select value={d.pickIdx} onChange={e=>update(i,{pickIdx:Number(e.target.value)})}
                       style={{width:"100%",background:T.surface,border:`1px solid ${T.border}`,borderRadius:5,padding:"5px 6px",color:T.white,fontSize:10,outline:"none",fontFamily:T.font,marginBottom:5}}>
                       {d.options.map((o,oi)=><option key={o.id} value={oi}>{o.src} · {o.name}</option>)}
@@ -963,7 +995,21 @@ function NaturalFoodEntry({date, onAdded}) {
                     </div>
                   </>
                 ) : (
-                  <div style={{fontSize:9,color:T.amber}}>No encontré este alimento en las bases de datos. Bórralo o búscalo manualmente abajo.</div>
+                  <div>
+                    <div style={{fontSize:9,color:T.amber,marginBottom:5,lineHeight:1.5}}>
+                      No lo encontré{d.busqueda&&d.busqueda!==d.nombre?` (probé "${d.nombre}" y "${d.busqueda}")`:""}. Escribe otro término — en inglés suele funcionar mejor.
+                    </div>
+                    <div style={{display:"flex",gap:5}}>
+                      <input value={d.retry||""} onChange={e=>update(i,{retry:e.target.value})}
+                        onKeyDown={e=>e.key==="Enter"&&retrySearch(i)}
+                        placeholder="ej: pork rinds"
+                        style={{flex:1,background:T.surface,border:`1px solid ${T.border}`,borderRadius:5,padding:"5px 8px",color:T.white,fontSize:11,outline:"none",fontFamily:T.font}}/>
+                      <button onClick={()=>retrySearch(i)} disabled={d.searching}
+                        style={{background:T.amber+"22",border:`1px solid ${T.amber}55`,borderRadius:5,padding:"5px 10px",color:T.amber,fontSize:10,fontWeight:700,cursor:"pointer"}}>
+                        {d.searching?"…":"Buscar"}
+                      </button>
+                    </div>
+                  </div>
                 )}
               </div>
             );
