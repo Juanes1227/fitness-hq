@@ -1,0 +1,41 @@
+/* ── Global reset & polish layer ──────────────────────────────────────────────
+   The app itself is styled with inline styles (see App.jsx / theme object T).
+   This file only adds what inline styles can't do: pseudo-classes, font
+   loading fallback behavior, scrollbar theming, and selection color. */
+
+*, *::before, *::after { box-sizing: border-box; }
+html, body, #root { height: 100%; }
+body { margin: 0; -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+
+::selection { background: #3b82f699; color: #fff; }
+
+/* Slim, dark scrollbar to match the theme instead of the OS default */
+* { scrollbar-width: thin; scrollbar-color: #2a3355 #0b1022; }
+*::-webkit-scrollbar { width: 9px; height: 9px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb { background: #2a3355; border-radius: 6px; }
+*::-webkit-scrollbar-thumb:hover { background: #3a4570; }
+
+/* Interaction layer: every button/select/input in the app is inline-styled,
+   so hover/focus/active states need !important to win over the inline
+   background/border/box-shadow they already set. Kept subtle on purpose. */
+button, select, input, a, [role="button"] {
+  transition: filter .15s ease, transform .08s ease, border-color .15s ease, box-shadow .15s ease;
+}
+button:not(:disabled):hover, [role="button"]:hover { filter: brightness(1.16); }
+button:not(:disabled):active { transform: scale(.97); }
+button:disabled { cursor: default; opacity: .6; }
+
+input:focus, select:focus, textarea:focus {
+  border-color: #3b82f6 !important;
+  box-shadow: 0 0 0 3px #3b82f633 !important;
+}
+:focus-visible {
+  outline: 2px solid #3b82f6;
+  outline-offset: 2px;
+}
+
+/* Number inputs: hide the native spinner so custom quick-pick chips (50/100/150g
+   etc.) are the only affordance, matching the rest of the app's flat aesthetic */
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button { opacity: .5; }

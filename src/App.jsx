@@ -6,8 +6,11 @@ const T = {
   blue:"#3b82f6", green:"#10b981", amber:"#f59e0b",
   purple:"#8b5cf6", cyan:"#06b6d4", red:"#ef4444", pink:"#ec4899",
   white:"#dde4f2", muted:"#4e607a", dim:"#222d42",
-  font:"'Barlow Condensed','Arial Narrow',Arial,sans-serif",
-  mono:"monospace",
+  font:"'Inter',system-ui,-apple-system,'Segoe UI',sans-serif",
+  display:"'Oswald',sans-serif",
+  mono:"'JetBrains Mono',ui-monospace,monospace",
+  shadow:"0 1px 2px rgba(0,0,0,.2), 0 8px 24px -8px rgba(0,0,0,.55)",
+  shadowLg:"0 4px 8px rgba(0,0,0,.25), 0 24px 48px -12px rgba(0,0,0,.65)",
 };
 
 // ── Perfil y objetivos dinámicos (TDEE · Mifflin-St Jeor) ─────────────────────
@@ -542,7 +545,7 @@ const Ring = ({val,max}) => {
       <svg width="88" height="88" viewBox="0 0 88 88" style={{transform:"rotate(-90deg)"}}>
         <circle cx="44" cy="44" r={r} fill="none" stroke={T.dim} strokeWidth="6"/>
         <circle cx="44" cy="44" r={r} fill="none" stroke={col} strokeWidth="6"
-          strokeDasharray={c} strokeDashoffset={c*(1-pct)} strokeLinecap="round"/>
+          strokeDasharray={c} strokeDashoffset={c*(1-pct)} strokeLinecap="round" style={{transition:"stroke-dashoffset .5s ease, stroke .3s ease"}}/>
       </svg>
       <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center"}}>
         <div style={{fontFamily:T.mono,fontSize:15,fontWeight:700,color:col,lineHeight:1}}>{val}</div>
@@ -560,7 +563,7 @@ function WeekNav({selDate, onSelect, schedule}) {
   const days = useMemo(()=>Array.from({length:7},(_,i)=>addDays(ws,i)),[ws]);
   const td   = today();
   return (
-    <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:10,padding:"10px 10px 8px",marginBottom:12}}>
+    <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:10,padding:"10px 10px 8px",marginBottom:12,boxShadow:T.shadow}}>
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
         <button onClick={()=>setWs(d=>addDays(d,-7))} style={btnStyle}>‹</button>
         <span style={{fontSize:9,fontWeight:700,letterSpacing:2,color:T.muted,textTransform:"uppercase"}}>{fmt(days[0])} — {fmt(days[6])}</span>
@@ -609,14 +612,14 @@ function WgerDrawer({slotId, exId, exName, color, onClose}) {
   const hasData     = embedded || wger;
 
   return (
-    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.8)",zIndex:300,display:"flex",alignItems:"flex-end"}} onClick={onClose}>
-      <div style={{background:T.surface,border:`1px solid ${color}44`,borderRadius:"14px 14px 0 0",width:"100%",maxHeight:"72vh",overflow:"auto",padding:18}} onClick={e=>e.stopPropagation()}>
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.8)",backdropFilter:"blur(3px)",zIndex:300,display:"flex",alignItems:"flex-end"}} onClick={onClose}>
+      <div style={{background:T.surface,border:`1px solid ${color}44`,borderRadius:"14px 14px 0 0",width:"100%",maxHeight:"72vh",overflow:"auto",padding:18,boxShadow:T.shadowLg}} onClick={e=>e.stopPropagation()}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
           <div>
             <div style={{fontSize:9,fontWeight:700,letterSpacing:2,color,textTransform:"uppercase",marginBottom:2}}>
               {wger ? "wger.de + datos locales" : embedded ? "Datos locales" : "Información"}
             </div>
-            <div style={{fontFamily:"Impact,sans-serif",fontSize:18,color:"#fff"}}>{exName}</div>
+            <div style={{fontFamily:T.display,fontWeight:600,fontSize:18,color:"#fff"}}>{exName}</div>
           </div>
           <button onClick={onClose} style={{background:"none",border:"none",color:T.muted,fontSize:20,cursor:"pointer"}}>✕</button>
         </div>
@@ -674,12 +677,12 @@ function SwapDrawer({slot,color,onSwap,onClose}) {
   ];
 
   return (
-    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.8)",zIndex:200,display:"flex",justifyContent:"flex-end"}} onClick={onClose}>
-      <div style={{background:T.surface,border:`1px solid ${color}33`,borderRadius:"14px 0 0 14px",width:"min(380px,94vw)",height:"100%",overflow:"auto",padding:16,display:"flex",flexDirection:"column",gap:8}} onClick={e=>e.stopPropagation()}>
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.8)",backdropFilter:"blur(3px)",zIndex:200,display:"flex",justifyContent:"flex-end"}} onClick={onClose}>
+      <div style={{background:T.surface,border:`1px solid ${color}33`,borderRadius:"14px 0 0 14px",width:"min(380px,94vw)",height:"100%",overflow:"auto",padding:16,display:"flex",flexDirection:"column",gap:8,boxShadow:T.shadowLg}} onClick={e=>e.stopPropagation()}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
           <div>
             <div style={{fontSize:9,fontWeight:700,letterSpacing:2,color,textTransform:"uppercase"}}>ALTERNATIVAS</div>
-            <div style={{fontFamily:"Impact,sans-serif",fontSize:15,color:"#fff"}}>{slot.name}</div>
+            <div style={{fontFamily:T.display,fontWeight:600,fontSize:15,color:"#fff"}}>{slot.name}</div>
           </div>
           <button onClick={onClose} style={{background:"none",border:"none",color:T.muted,fontSize:18,cursor:"pointer"}}>✕</button>
         </div>
@@ -770,12 +773,12 @@ function LogDrawer({slot,override,color,onClose,onSaved,history}) {
     finally { setSaving(false); }
   }
   return (
-    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.8)",zIndex:250,display:"flex",alignItems:"flex-end"}} onClick={onClose}>
-      <div style={{background:T.surface,border:`1px solid ${color}44`,borderRadius:"14px 14px 0 0",width:"100%",maxHeight:"78vh",overflow:"auto",padding:18}} onClick={e=>e.stopPropagation()}>
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.8)",backdropFilter:"blur(3px)",zIndex:250,display:"flex",alignItems:"flex-end"}} onClick={onClose}>
+      <div style={{background:T.surface,border:`1px solid ${color}44`,borderRadius:"14px 14px 0 0",width:"100%",maxHeight:"78vh",overflow:"auto",padding:18,boxShadow:T.shadowLg}} onClick={e=>e.stopPropagation()}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
           <div>
             <div style={{fontSize:9,fontWeight:700,letterSpacing:2,color,textTransform:"uppercase",marginBottom:2}}>Registrar series</div>
-            <div style={{fontFamily:"Impact,sans-serif",fontSize:18,color:"#fff"}}>{name}</div>
+            <div style={{fontFamily:T.display,fontWeight:600,fontSize:18,color:"#fff"}}>{name}</div>
           </div>
           <button onClick={onClose} style={{background:"none",border:"none",color:T.muted,fontSize:20,cursor:"pointer"}}>✕</button>
         </div>
@@ -825,7 +828,7 @@ function DayContent({dayKey,swaps,onSwap,onDetail,onLog,allLogs,color,goal}) {
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
         <div>
           <div style={{fontSize:9,fontWeight:700,letterSpacing:2,color,textTransform:"uppercase"}}>{routine.day}</div>
-          <div style={{fontFamily:"Impact,sans-serif",fontSize:18,color:"#fff"}}>{routine.label}</div>
+          <div style={{fontFamily:T.display,fontWeight:600,fontSize:18,color:"#fff"}}>{routine.label}</div>
         </div>
         <div style={{display:"flex",gap:5}}>
           <div style={{background:color+"11",border:`1px solid ${color}33`,borderRadius:7,padding:"5px 10px",textAlign:"center"}}>
@@ -867,7 +870,7 @@ function DayContent({dayKey,swaps,onSwap,onDetail,onLog,allLogs,color,goal}) {
   const cardioNote = dayKey!=="off" ? CARDIO_GOAL_NOTE[goal] : null;
   return (
     <div style={{background:T.card,border:`1px solid ${info.color}33`,borderRadius:12,padding:16}}>
-      <div style={{fontFamily:"Impact,sans-serif",fontSize:20,color:"#fff",marginBottom:12}}>{info.icon} {info.title}</div>
+      <div style={{fontFamily:T.display,fontWeight:600,fontSize:20,color:"#fff",marginBottom:12}}>{info.icon} {info.title}</div>
       <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:cardioNote?12:0}}>
         {info.items.map((item,i)=>(
           <div key={i} style={{display:"flex",gap:10,alignItems:"flex-start"}}>
@@ -1432,13 +1435,13 @@ function App() {
   const targets = useMemo(()=>computeTargets(profile),[profile]);
   const accent=TABS.find(t=>t.id===tab)?.c||"#3b82f6";
   return (
-    <div style={{background:T.bg,color:T.white,fontFamily:T.font,minHeight:"100vh",padding:12}}>
-      <div style={{background:"linear-gradient(120deg,#060d1e,#0c1532 60%,#07111f)",border:`1px solid ${T.border}`,borderRadius:14,padding:"12px 18px",marginBottom:10,position:"relative",overflow:"hidden"}}>
+    <div style={{background:`radial-gradient(1200px 600px at 15% -10%,#0d1a3a55,transparent),radial-gradient(900px 500px at 110% 10%,#10352e44,transparent),${T.bg}`,color:T.white,fontFamily:T.font,minHeight:"100vh",padding:12}}>
+      <div style={{background:"linear-gradient(120deg,#060d1e,#0c1532 60%,#07111f)",border:`1px solid ${T.border}`,borderRadius:14,padding:"12px 18px",marginBottom:10,position:"relative",overflow:"hidden",boxShadow:T.shadow}}>
         <div style={{position:"absolute",bottom:0,left:0,right:0,height:2,background:`linear-gradient(90deg,#3b82f6,#10b981 40%,#f59e0b)`}}/>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
           <div>
             <div style={{fontSize:7,letterSpacing:4,color:T.muted,textTransform:"uppercase",marginBottom:2}}>wger.de · USDA · Open Food Facts</div>
-            <div style={{fontFamily:"Impact,'Arial Narrow',sans-serif",fontSize:22,letterSpacing:2,color:"#fff",lineHeight:1}}>
+            <div style={{fontFamily:T.display,fontWeight:700,fontSize:22,letterSpacing:1,color:"#fff",lineHeight:1}}>
               FITNESS <span style={{color:accent,transition:"color .3s"}}>HQ</span>
             </div>
           </div>
@@ -1454,7 +1457,7 @@ function App() {
       </div>
       <div style={{display:"flex",gap:4,marginBottom:10}}>
         {TABS.map(t=>(
-          <button key={t.id} onClick={()=>setTab(t.id)} style={{flex:1,background:tab===t.id?t.c+"22":T.card,border:`1px solid ${tab===t.id?t.c+"66":T.border}`,borderRadius:8,padding:"7px 4px",color:tab===t.id?t.c:T.muted,fontSize:10,fontWeight:700,letterSpacing:.5,textTransform:"uppercase",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
+          <button key={t.id} onClick={()=>setTab(t.id)} style={{flex:1,background:tab===t.id?t.c+"22":T.card,border:`1px solid ${tab===t.id?t.c+"66":T.border}`,borderRadius:8,padding:"7px 4px",color:tab===t.id?t.c:T.muted,fontSize:10,fontWeight:700,letterSpacing:.5,textTransform:"uppercase",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:2,boxShadow:tab===t.id?`0 2px 10px -2px ${t.c}55`:"none"}}>
             <span style={{fontSize:16}}>{t.i}</span><span>{t.l}</span>
           </button>
         ))}
@@ -1496,9 +1499,10 @@ function AuthGate({children}) {
   if (status==="authed") return children;
 
   return (
-    <div style={{background:T.bg,color:T.white,fontFamily:T.font,minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
-      <form onSubmit={submit} style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:14,padding:24,width:"min(340px,100%)",boxSizing:"border-box"}}>
-        <div style={{fontFamily:"Impact,'Arial Narrow',sans-serif",fontSize:22,letterSpacing:2,color:"#fff",textAlign:"center",marginBottom:4}}>FITNESS HQ</div>
+    <div style={{background:`radial-gradient(900px 500px at 20% 10%,#0d1a3a66,transparent),radial-gradient(700px 500px at 100% 90%,#10352e4d,transparent),${T.bg}`,color:T.white,fontFamily:T.font,minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+      <form onSubmit={submit} style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:16,padding:28,width:"min(340px,100%)",boxSizing:"border-box",boxShadow:T.shadowLg,position:"relative",overflow:"hidden"}}>
+        <div style={{position:"absolute",top:0,left:0,right:0,height:3,background:"linear-gradient(90deg,#3b82f6,#10b981 40%,#f59e0b)"}}/>
+        <div style={{fontFamily:T.display,fontWeight:700,fontSize:24,letterSpacing:1,color:"#fff",textAlign:"center",marginBottom:4}}>FITNESS HQ</div>
         <div style={{fontSize:10,color:T.muted,textAlign:"center",marginBottom:18,textTransform:"uppercase",letterSpacing:1}}>{mode==="login"?"Inicia sesión":"Crea tu cuenta"}</div>
         <input type="email" required autoComplete="username" placeholder="Email" value={email} onChange={e=>setEmail(e.target.value)}
           style={{width:"100%",background:T.surface,border:`1px solid ${T.border}`,borderRadius:6,padding:"9px 10px",color:T.white,fontSize:13,marginBottom:8,outline:"none",boxSizing:"border-box",fontFamily:T.font}}/>
