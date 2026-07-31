@@ -10,7 +10,7 @@ import {
   getMeals, getMealsByDate, addMeal, deleteMeal,
   getMetrics, upsertMetric,
 } from "./server/db.js";
-import { parseFood, writeCoachNote } from "./server/ai.js";
+import { parseFood, writeCoachNote, probeModels } from "./server/ai.js";
 
 function json(data, init={}) {
   return new Response(JSON.stringify(data), {
@@ -141,6 +141,15 @@ async function handleApi(request, env, url) {
       return json({ items: await parseFood(env, body.text) });
     } catch (err) {
       return json({ error: "La IA no está disponible ahora mismo.", detail: String(err) }, { status: 503 });
+    }
+  }
+
+  // Diagnóstico: qué modelos siguen vivos (Cloudflare los deprecia seguido).
+  if (pathname === "/api/ai/models" && method === "GET") {
+    try {
+      return json({ models: await probeModels(env) });
+    } catch (err) {
+      return json({ error: String(err) }, { status: 503 });
     }
   }
 

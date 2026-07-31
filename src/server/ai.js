@@ -9,17 +9,60 @@
 //   2) writeCoachNote: redactar en prosa recomendaciones YA CALCULADAS por
 //      coach.js. Recibe las cifras hechas y tiene prohibido producir otras.
 
-const MODEL = "@cf/meta/llama-3.1-8b-instruct";
+// Cloudflare deprecia modelos con frecuencia (llama-3.1-8b-instruct murió el
+// 2026-05-30 y tumbó esta función en silencio). En vez de fijar uno solo,
+// probamos una lista en orden y recordamos el primero que responda. Así una
+// deprecación futura degrada al siguiente en vez de romper la app.
+const MODEL_CANDIDATES = [
+  "@cf/meta/llama-4-scout-17b-16e-instruct",
+  "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+  "@cf/meta/llama-3.2-3b-instruct",
+  "@cf/meta/llama-3.1-8b-instruct-fast",
+  "@cf/mistralai/mistral-small-3.1-24b-instruct",
+];
+let workingModel = null; // cache por isolate
+
+async function runModel(env, opts) {
+  if (!env.AI) throw new Error("Workers AI no está configurado (falta el binding AI).");
+  const order = workingModel
+    ? [workingModel, ...MODEL_CANDIDATES.filter(m => m !== workingModel)]
+    : MODEL_CANDIDATES;
+  const tried = [];
+  for (const model of order) {
+    try {
+      const res = await env.AI.run(model, opts);
+      workingModel = model;
+      return { res, model };
+    } catch (err) {
+      tried.push(`${model} → ${String(err?.message || err).slice(0, 100)}`);
+      if (workingModel === model) workingModel = null; // dejó de servir
+    }
+  }
+  throw new Error(`Ningún modelo respondió. ${tried.join(" | ")}`);
+}
+
+// Diagnóstico: qué modelos responden hoy.
+export async function probeModels(env) {
+  const out = [];
+  for (const model of MODEL_CANDIDATES) {
+    try {
+      await env.AI.run(model, { messages: [{ role: "user", content: "di ok" }], max_tokens: 5 });
+      out.push({ model, ok: true });
+    } catch (err) {
+      out.push({ model, ok: false, error: String(err?.message || err).slice(0, 160) });
+    }
+  }
+  return out;
+}
 
 // Los modelos chicos alucinan con facilidad; mantener temperatura baja ayuda.
 const TEMP = 0.2;
 
 export async function parseFood(env, text) {
-  if (!env.AI) throw new Error("Workers AI no está configurado.");
   const clean = String(text || "").slice(0, 500); // techo de entrada
   if (!clean.trim()) return [];
 
-  const res = await env.AI.run(MODEL, {
+  const { res } = await runModel(env, {
     messages: [
       {
         role: "system",
@@ -78,7 +121,6 @@ export async function parseFood(env, text) {
 }
 
 export async function writeCoachNote(env, recs, profile) {
-  if (!env.AI) throw new Error("Workers AI no está configurado.");
   const payload = (recs || []).slice(0, 3).map(r => ({
     titulo: r.title,
     detalle: r.detail,
@@ -86,7 +128,7 @@ export async function writeCoachNote(env, recs, profile) {
   }));
   if (!payload.length) return "";
 
-  const res = await env.AI.run(MODEL, {
+  const { res } = await runModel(env, {
     messages: [
       {
         role: "system",

@@ -863,12 +863,13 @@ const macrosFor = (f,g) => ({
 // ── Registro de comida en lenguaje natural ────────────────────────────────────
 // El LLM SOLO identifica qué comiste y cuántos gramos. Los macros se resuelven
 // después contra USDA/Open Food Facts, y nada se guarda sin que confirmes.
-function NaturalFoodEntry({date, mealType, onAdded}) {
+function NaturalFoodEntry({date, onAdded}) {
   const [text,setText]=useState("");
   const [busy,setBusy]=useState(false);
   const [drafts,setDrafts]=useState(null);
   const [err,setErr]=useState("");
   const [saving,setSaving]=useState(false);
+  const [mealType,setMealType]=useState("lunch");
 
   async function interpret(){
     if(!text.trim())return;
@@ -909,6 +910,14 @@ function NaturalFoodEntry({date, mealType, onAdded}) {
     <div style={{background:T.surface,border:`1px solid ${T.purple}33`,borderRadius:8,padding:10,marginBottom:10}}>
       <div style={{fontSize:8,letterSpacing:1.5,color:T.purple,textTransform:"uppercase",fontWeight:700,marginBottom:6}}>
         💬 Escríbelo como lo dirías
+      </div>
+      <div style={{display:"flex",gap:4,marginBottom:6,flexWrap:"wrap"}}>
+        {MEAL_TYPES.map(m=>(
+          <button key={m.id} onClick={()=>setMealType(m.id)}
+            style={{background:mealType===m.id?T.purple+"22":"none",border:`1px solid ${mealType===m.id?T.purple+"55":T.border}`,borderRadius:6,padding:"3px 9px",color:mealType===m.id?T.purple:T.muted,fontSize:9,fontWeight:700,cursor:"pointer"}}>
+            {m.icon} {m.l}
+          </button>
+        ))}
       </div>
       <div style={{display:"flex",gap:6,marginBottom:6}}>
         <input value={text} onChange={e=>setText(e.target.value)} onKeyDown={e=>e.key==="Enter"&&interpret()}
@@ -1007,16 +1016,16 @@ function NutritionModule({selDate,targets}) {
           <Bar label="Grasa"    val={tot.fat}     max={targets.fat}     color={T.pink}/>
         </div>
       </div>
+      {/* Entrada por lenguaje natural: visible siempre — es el camino principal */}
+      <NaturalFoodEntry date={key} onAdded={m=>setMeals(ms=>[...ms,m])}/>
       <button onClick={()=>setOpen(o=>!o)} style={{width:"100%",background:open?T.dim:T.green+"22",border:`1px solid ${open?T.border:T.green+"55"}`,borderRadius:8,padding:"9px",color:open?T.muted:T.green,fontSize:11,fontWeight:700,letterSpacing:1,textTransform:"uppercase",cursor:"pointer",marginBottom:10}}>
-        {open?"✕ Cerrar":"＋ Agregar alimento"}
+        {open?"✕ Cerrar":"🔍 Buscar alimento uno por uno"}
       </button>
       {open&&(
         <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:10,padding:12,marginBottom:10}}>
           <div style={{display:"flex",gap:4,marginBottom:10,flexWrap:"wrap"}}>
             {MEAL_TYPES.map(m=><button key={m.id} onClick={()=>setAddTo(m.id)} style={{background:addTo===m.id?T.green+"22":"none",border:`1px solid ${addTo===m.id?T.green+"55":T.border}`,borderRadius:6,padding:"4px 10px",color:addTo===m.id?T.green:T.muted,fontSize:10,fontWeight:700,cursor:"pointer"}}>{m.icon} {m.l}</button>)}
           </div>
-          <NaturalFoodEntry date={key} mealType={addTo} onAdded={m=>setMeals(ms=>[...ms,m])}/>
-          <div style={{fontSize:8,letterSpacing:1.5,color:T.muted,textTransform:"uppercase",fontWeight:700,marginBottom:6}}>🔍 O búscalo uno por uno</div>
           <div style={{position:"relative",marginBottom:8}}>
             <input value={q} onChange={e=>setQ(e.target.value)} onKeyDown={e=>e.key==="Enter"&&search()}
               placeholder="ej: arroz, pechuga, aguacate…"
