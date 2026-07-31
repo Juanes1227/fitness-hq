@@ -55,3 +55,14 @@ CREATE TABLE IF NOT EXISTS metrics (
   muscle  REAL,
   PRIMARY KEY(user_id, date)
 );
+
+-- Sustituciones de ejercicio en la rutina fija (slot_id: "l1","s3","p5", etc.)
+CREATE TABLE IF NOT EXISTS exercise_swaps (
+  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  slot_id    TEXT NOT NULL,
+  ex_id      TEXT NOT NULL,      -- id de wger (numérico) o de alternativa local ("la1"), como texto
+  ex_name    TEXT NOT NULL,
+  ex_es      TEXT,
+  updated_at TEXT,
+  PRIMARY KEY(user_id, slot_id)
+);

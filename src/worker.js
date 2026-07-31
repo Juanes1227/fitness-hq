@@ -9,6 +9,7 @@ import {
   getAllExerciseLogs, saveExerciseLog,
   getMeals, getMealsByDate, addMeal, deleteMeal,
   getMetrics, upsertMetric,
+  getSwaps, saveSwap, deleteSwap,
 } from "./server/db.js";
 import { parseFood, writeCoachNote, probeModels } from "./server/ai.js";
 
@@ -131,6 +132,22 @@ async function handleApi(request, env, url) {
     return json({ ok: true });
   }
 
+  // ── Sustituciones de ejercicio (SWAP en Rutina) ────────────────────────────
+  if (pathname === "/api/swaps" && method === "GET") {
+    return json(await getSwaps(env, uid));
+  }
+  if (pathname === "/api/swaps" && method === "POST") {
+    const body = await readJSON(request);
+    if (!body?.slotId || !body?.ex?.id || !body?.ex?.name) return bad("Body inválido.");
+    await saveSwap(env, uid, body.slotId, body.ex);
+    return json({ ok: true });
+  }
+  const swapMatch = pathname.match(/^\/api\/swaps\/([^/]+)$/);
+  if (swapMatch && method === "DELETE") {
+    await deleteSwap(env, uid, decodeURIComponent(swapMatch[1]));
+    return json({ ok: true });
+  }
+
   // ── IA: solo lenguaje, nunca cifras ───────────────────────────────────────
   // parse-food devuelve qué comiste y cuánto; los macros los resuelve el
   // cliente contra USDA/OFF. explain redacta sobre números ya calculados.
@@ -168,10 +185,15 @@ async function handleApi(request, env, url) {
     const body = await readJSON(request);
     if (!body?.dump) return bad("Body inválido.");
     const dump = body.dump;
-    let imported = { profile:false, metrics:0, exlog:0, meals:0 };
+    let imported = { profile:false, metrics:0, exlog:0, meals:0, swaps:0 };
     if (dump.profile) { await upsertProfile(env, uid, dump.profile); imported.profile = true; }
     if (Array.isArray(dump.metrics)) {
       for (const m of dump.metrics) { await upsertMetric(env, uid, m); imported.metrics++; }
+    }
+    if (dump.swaps && typeof dump.swaps === "object") {
+      for (const [slotId, ex] of Object.entries(dump.swaps)) {
+        if (ex?.id && ex?.name) { await saveSwap(env, uid, slotId, ex); imported.swaps++; }
+      }
     }
     for (const [key, val] of Object.entries(dump)) {
       if (key.startsWith("exlog:") && Array.isArray(val)) {

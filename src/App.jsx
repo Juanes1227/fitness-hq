@@ -827,9 +827,13 @@ function WorkoutModule({goal,week}) {
   const [allLogs,setAllLogs]=useState({});
   const [logVersion,setLogVersion]=useState(0);
   useEffect(()=>{ api.getExLog().then(setAllLogs).catch(()=>{}); },[logVersion]);
+  useEffect(()=>{ api.getSwaps().then(setSwaps).catch(()=>{}); },[]);
   const sched=schedule[dow(selDate)];
   function handleSwap(slot){setSwapTarget({slot,color:sched.color});}
-  function applySwap(slotId,ex){setSwaps(s=>({...s,[slotId]:ex}));setSwapTarget(null);}
+  function applySwap(slotId,ex){
+    setSwaps(s=>({...s,[slotId]:ex}));setSwapTarget(null);
+    api.saveSwap(slotId,ex).catch(()=>{});
+  }
   function openDetail(slotId, wgerId, name){setDetailSlotId(slotId);setDetailId(wgerId);setDetailName(name);}
   function closeDetail(){setDetailSlotId(null);setDetailId(null);}
   function handleLog(slot,override){setLogTarget({slot,override});}

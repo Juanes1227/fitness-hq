@@ -33,6 +33,10 @@ export const api = {
   getMetrics: () => req("/api/metrics"),
   saveMetric: (m) => req("/api/metrics", { method:"POST", body: JSON.stringify(m) }),
 
+  getSwaps: () => req("/api/swaps"),
+  saveSwap: (slotId, ex) => req("/api/swaps", { method:"POST", body: JSON.stringify({slotId,ex}) }),
+  deleteSwap: (slotId) => req(`/api/swaps/${encodeURIComponent(slotId)}`, { method:"DELETE" }),
+
   importDump: (dump) => req("/api/import", { method:"POST", body: JSON.stringify({dump}) }),
 
   // IA — solo lenguaje. parseFood devuelve {nombre, gramos}; los macros los
@@ -44,10 +48,10 @@ export const api = {
 // Reconstruye el mismo formato del backup JSON local (profile, metrics[], exlog:*, meals:*)
 // a partir de la API, para que "Exportar" siga funcionando igual que antes.
 export async function exportBundleFromApi() {
-  const [profile, exlog, meals, metrics] = await Promise.all([
-    api.getProfile(), api.getExLog(), api.getMeals(), api.getMetrics(),
+  const [profile, exlog, meals, metrics, swaps] = await Promise.all([
+    api.getProfile(), api.getExLog(), api.getMeals(), api.getMetrics(), api.getSwaps(),
   ]);
-  const dump = { profile, metrics };
+  const dump = { profile, metrics, swaps };
   Object.entries(exlog||{}).forEach(([name,sessions]) => { dump[`exlog:${name}`] = sessions; });
   Object.entries(meals||{}).forEach(([date,items]) => { dump[`meals:${date}`] = items; });
   return dump;

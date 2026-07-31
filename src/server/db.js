@@ -84,3 +84,27 @@ export async function upsertMetric(env, userId, m) {
     ON CONFLICT(user_id, date) DO UPDATE SET weight=excluded.weight, fat=excluded.fat, muscle=excluded.muscle
   `).bind(userId, m.date, m.weight??null, m.fat??null, m.muscle??null).run();
 }
+
+export async function getSwaps(env, userId) {
+  const { results } = await env.DB.prepare(
+    "SELECT slot_id, ex_id, ex_name, ex_es FROM exercise_swaps WHERE user_id = ?"
+  ).bind(userId).all();
+  const out = {};
+  for (const r of results) {
+    // El id vuelve a número cuando es un id de wger (todo dígitos); las
+    // alternativas locales usan ids tipo "la1" y quedan como texto.
+    const id = /^\d+$/.test(r.ex_id) ? Number(r.ex_id) : r.ex_id;
+    out[r.slot_id] = { id, name: r.ex_name, es: r.ex_es || undefined };
+  }
+  return out;
+}
+export async function saveSwap(env, userId, slotId, ex) {
+  const now = new Date().toISOString();
+  await env.DB.prepare(`
+    INSERT INTO exercise_swaps (user_id, slot_id, ex_id, ex_name, ex_es, updated_at) VALUES (?,?,?,?,?,?)
+    ON CONFLICT(user_id, slot_id) DO UPDATE SET ex_id=excluded.ex_id, ex_name=excluded.ex_name, ex_es=excluded.ex_es, updated_at=excluded.updated_at
+  `).bind(userId, slotId, String(ex.id), ex.name, ex.es??null, now).run();
+}
+export async function deleteSwap(env, userId, slotId) {
+  await env.DB.prepare("DELETE FROM exercise_swaps WHERE user_id = ? AND slot_id = ?").bind(userId, slotId).run();
+}
