@@ -34,6 +34,11 @@ export const api = {
   saveMetric: (m) => req("/api/metrics", { method:"POST", body: JSON.stringify(m) }),
 
   importDump: (dump) => req("/api/import", { method:"POST", body: JSON.stringify({dump}) }),
+
+  // IA — solo lenguaje. parseFood devuelve {nombre, gramos}; los macros los
+  // resuelve el cliente contra USDA/OFF. explain redacta sobre cifras ya calculadas.
+  parseFood: (text) => req("/api/ai/parse-food", { method:"POST", body: JSON.stringify({text}) }),
+  explain: (recs, profile) => req("/api/ai/explain", { method:"POST", body: JSON.stringify({recs, profile}) }),
 };
 
 // Reconstruye el mismo formato del backup JSON local (profile, metrics[], exlog:*, meals:*)

@@ -13,6 +13,11 @@
   "compatibility_flags": [
     "nodejs_compat"
   ],
+  // Workers AI — no requiere API key, solo el binding. Incluido en el plan
+  // gratuito (10.000 Neurons/día, compartidos entre todos los modelos).
+  "ai": {
+    "binding": "AI"
+  },
   "d1_databases": [
     {
       "binding": "DB",

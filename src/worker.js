@@ -10,6 +10,7 @@ import {
   getMeals, getMealsByDate, addMeal, deleteMeal,
   getMetrics, upsertMetric,
 } from "./server/db.js";
+import { parseFood, writeCoachNote } from "./server/ai.js";
 
 function json(data, init={}) {
   return new Response(JSON.stringify(data), {
@@ -128,6 +129,29 @@ async function handleApi(request, env, url) {
     if (!body?.date || body.weight==null) return bad("Body inválido.");
     await upsertMetric(env, uid, body);
     return json({ ok: true });
+  }
+
+  // ── IA: solo lenguaje, nunca cifras ───────────────────────────────────────
+  // parse-food devuelve qué comiste y cuánto; los macros los resuelve el
+  // cliente contra USDA/OFF. explain redacta sobre números ya calculados.
+  if (pathname === "/api/ai/parse-food" && method === "POST") {
+    const body = await readJSON(request);
+    if (!body?.text) return bad("Falta el texto.");
+    try {
+      return json({ items: await parseFood(env, body.text) });
+    } catch (err) {
+      return json({ error: "La IA no está disponible ahora mismo.", detail: String(err) }, { status: 503 });
+    }
+  }
+
+  if (pathname === "/api/ai/explain" && method === "POST") {
+    const body = await readJSON(request);
+    if (!Array.isArray(body?.recs)) return bad("Body inválido.");
+    try {
+      return json({ note: await writeCoachNote(env, body.recs, body.profile) });
+    } catch (err) {
+      return json({ error: "La IA no está disponible ahora mismo.", detail: String(err) }, { status: 503 });
+    }
   }
 
   // ── Importar respaldo local (mismo formato del export JSON de la app) ─────

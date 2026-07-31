@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { api, exportBundleFromApi } from "./api.js";
+// Toda la lógica numérica vive en coach.js — aquí solo se presenta.
+import { suggestProgression, buildRecommendations } from "./coach.js";
 
 const T = {
   bg:"#060810", surface:"#0b1022", card:"#0d1228", border:"#192040",
@@ -273,20 +275,6 @@ function importBackup(file, onDone) {
   reader.readAsText(file);
 }
 
-// ── Log de ejercicio ejecutado (sobrecarga progresiva) ─────────────────────────
-function suggestProgression(last, repRange) {
-  if (!last) return null;
-  const { hi, lo } = repRange;
-  const reps = last.sets.map(s=>s.reps).filter(r=>r!=null);
-  if (!reps.length) return null;
-  const w = Math.max(...last.sets.map(s=>s.weight||0));
-  const allTop = reps.every(r=>r>=hi);
-  const anyBelow = reps.some(r=>r<lo);
-  if (allTop)   return { txt:`Sube a ${w?Math.round((w+2.5)*10)/10:"+"}kg — todas las series llegaron al tope`, c:T.green };
-  if (anyBelow) return { txt:`Mantén ${w}kg — al menos una serie no llegó al mínimo`, c:T.amber };
-  return { txt:`Repite ${w}kg, busca 1 rep más por serie`, c:T.blue };
-}
-
 // ── Analítica de entrenamiento (agrega todo el historial vía API) ─────────────
 async function scanExerciseLogs() {
   try { return await api.getExLog(); } catch { return {}; }
@@ -322,10 +310,9 @@ function buildAnalytics(logs, liftDays) {
   return { names, weeks, prs, adherence, sessionsThisWeek: sessionsThisWeek.size };
 }
 
-// ── Motor de recomendaciones (reglas sobre datos ya registrados, sin IA/costo) ──
-// Mapea nombre de ejercicio → grupos musculares, solo para los ejercicios base
-// de la rutina (los que tienen entrada en EX_DB). Las alternativas de swap sin
-// wger id no tienen datos musculares locales y quedan fuera de este análisis.
+// ── Mapa ejercicio → músculos (insumo para el motor en coach.js) ──────────────
+// Solo cubre los ejercicios base de la rutina (los que tienen entrada en EX_DB).
+// Las alternativas de swap sin datos musculares quedan fuera del análisis de volumen.
 function buildMuscleMap() {
   const map = {};
   Object.values(ROUTINE).forEach(r => r.slots.forEach(slot => {
@@ -336,78 +323,15 @@ function buildMuscleMap() {
 }
 const MUSCLE_MAP = buildMuscleMap();
 
-// Series esperadas por músculo en un ciclo semanal completo, según la rutina fija
-function expectedWeeklySets() {
-  const exp = {};
-  Object.values(ROUTINE).forEach(r => r.slots.forEach(slot => {
-    const info = EX_DB[slot.id]; if (!info) return;
-    (info.muscles||[]).forEach(m => exp[m] = (exp[m]||0) + slot.sets);
-    (info.sec||[]).forEach(m => exp[m] = (exp[m]||0) + slot.sets*0.5);
-  }));
-  return exp;
-}
-
 async function scanMealLogs() {
   try { return await api.getMeals(); } catch { return {}; }
 }
-
-function buildRecommendations({logs, meals, targets}) {
-  const recs = [];
-  const names = Object.keys(logs);
-  const since14 = toKey(addDays(today(),-14));
-
-  // 1) Volumen por músculo vs. lo esperado en las últimas 2 semanas
-  const actual = {};
-  names.forEach(n => {
-    const map = MUSCLE_MAP[n]; if (!map) return;
-    logs[n].filter(s=>s.date>=since14).forEach(s => {
-      const nSets = s.sets.filter(x=>x.weight||x.reps).length;
-      map.primary.forEach(m => actual[m]=(actual[m]||0)+nSets);
-      map.secondary.forEach(m => actual[m]=(actual[m]||0)+nSets*0.5);
-    });
-  });
-  Object.entries(expectedWeeklySets()).forEach(([muscle,expPerWeek]) => {
-    const exp2wk = expPerWeek*2;
-    const act = actual[muscle]||0;
-    if (exp2wk>=2 && act < exp2wk*0.6) {
-      recs.push({ icon:"💪", c:T.amber, title:`Poco volumen en ${muscle}`,
-        detail:`${Math.round(act*10)/10}/${exp2wk} series esperadas en las últimas 2 semanas. Revisa si estás saltando o cambiando seguido los ejercicios que lo trabajan.` });
-    }
-  });
-
-  // 2) Estancamiento: el 1RM estimado no sube en las últimas 3 sesiones registradas
-  names.forEach(n => {
-    const hist = logs[n].filter(s=>s.sets.some(x=>x.weight&&x.reps));
-    if (hist.length<3) return;
-    const last3 = hist.slice(-3).map(s=>Math.max(...s.sets.map(x=>e1rm(x.weight||0,x.reps||0))));
-    if (last3[2]<=last3[0]*1.01) {
-      recs.push({ icon:"📉", c:T.red, title:`Estancamiento en ${n}`,
-        detail:`Tu 1RM estimado no subió en las últimas 3 sesiones (${last3[0]}kg → ${last3[2]}kg). Considera un deload, variar el ejercicio, o revisar sueño y calorías.` });
-    }
-  });
-
-  // 3) Consistencia nutricional — proteína y calorías vs. objetivo
-  const mealDates = Object.keys(meals).filter(d=>d>=since14).sort();
-  if (mealDates.length>=3) {
-    const avg = k => mealDates.reduce((a,d)=>a+meals[d].reduce((s,m)=>s+(m[k]||0),0),0)/mealDates.length;
-    const avgProtein = avg("protein"), avgKcal = avg("kcal");
-    if (avgProtein < targets.protein*0.85) {
-      const gap = Math.round(targets.protein-avgProtein);
-      recs.push({ icon:"🥩", c:T.blue, title:"Proteína por debajo del objetivo",
-        detail:`Promedio ${Math.round(avgProtein)}g/día vs ${targets.protein}g objetivo (últimos ${mealDates.length} días con registro). Te faltan ~${gap}g: eso equivale a ~${Math.round(gap/31*100)}g de pechuga de pollo, ${Math.ceil(gap/11)} huevos, o un scoop extra de proteína en polvo.` });
-    }
-    if (Math.abs(avgKcal-targets.kcal) > targets.kcal*0.15) {
-      const over = avgKcal>targets.kcal;
-      recs.push({ icon: over?"⚠️":"🔻", c:T.amber, title: over?"Calorías por encima del objetivo":"Calorías por debajo del objetivo",
-        detail:`Promedio ${Math.round(avgKcal)} kcal/día vs ${targets.kcal} objetivo. ${over?"Puede frenar tu progreso hacia el déficit/objetivo actual.":"Puede afectar tu energía para entrenar y la recuperación."}` });
-    }
-  } else {
-    recs.push({ icon:"📋", c:T.muted, title:"Poco registro nutricional",
-      detail:"Registra comidas al menos 3–4 días para que esta sección pueda darte una recomendación de macros basada en datos reales." });
-  }
-
-  return recs;
+async function scanMetrics() {
+  try { return await api.getMetrics(); } catch { return []; }
 }
+
+// Mapea el `tone` que devuelve coach.js a los colores del tema
+const TONE_COLOR = { good:T.green, warn:T.amber, bad:T.red, info:T.blue, muted:T.muted };
 
 // ── wger API ──────────────────────────────────────────────────────────────────
 // wger renombró/eliminó los endpoints antiguos (/exercisesearch/, /exercisetranslation/
@@ -719,7 +643,9 @@ function SwapDrawer({slot,color,onSwap,onClose}) {
 function ExCard({slot,override,color,onSwap,onDetail,onLog,history}) {
   const name=override?.name||slot.name;
   const last = history?.length ? history[history.length-1] : null;
-  const suggestion = suggestProgression(last, repsRange(slot.reps));
+  // La sugerencia necesita el historial completo y el nombre (el incremento
+  // depende de si es compuesto o aislamiento).
+  const suggestion = suggestProgression(history, repsRange(slot.reps), name);
   return (
     <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 10px",display:"flex",flexDirection:"column",gap:6,position:"relative",overflow:"hidden"}}>
       <div style={{position:"absolute",left:0,top:0,bottom:0,width:3,background:color}}/>
@@ -747,11 +673,11 @@ function ExCard({slot,override,color,onSwap,onDetail,onLog,history}) {
       <button onClick={()=>onLog(slot,override)} style={{background:T.blue+"15",border:`1px solid ${T.blue}44`,borderRadius:6,padding:"6px 0",color:T.blue,fontSize:9,fontWeight:700,letterSpacing:1,textTransform:"uppercase",cursor:"pointer"}}>
         📝 Registrar series
       </button>
-      {suggestion&&(
-        <div style={{fontSize:9,color:suggestion.c,background:suggestion.c+"11",border:`1px solid ${suggestion.c}33`,borderRadius:6,padding:"5px 8px"}}>
+      {suggestion&&(()=>{ const sc=TONE_COLOR[suggestion.tone]||T.blue; return (
+        <div style={{fontSize:9,color:sc,background:sc+"11",border:`1px solid ${sc}33`,borderRadius:6,padding:"5px 8px"}}>
           💡 {suggestion.txt}
         </div>
-      )}
+      );})()}
     </div>
   );
 }
@@ -925,6 +851,123 @@ function WorkoutModule({goal,week}) {
   );
 }
 
+// ── Macros de un alimento para N gramos ───────────────────────────────────────
+// Siempre a partir de los valores por 100g de USDA/OFF — nunca de una estimación.
+const macrosFor = (f,g) => ({
+  kcal: Math.round(f.per100.kcal*g/100),
+  protein: Math.round(f.per100.protein*g/100*10)/10,
+  carbs: Math.round(f.per100.carbs*g/100*10)/10,
+  fat: Math.round(f.per100.fat*g/100*10)/10,
+});
+
+// ── Registro de comida en lenguaje natural ────────────────────────────────────
+// El LLM SOLO identifica qué comiste y cuántos gramos. Los macros se resuelven
+// después contra USDA/Open Food Facts, y nada se guarda sin que confirmes.
+function NaturalFoodEntry({date, mealType, onAdded}) {
+  const [text,setText]=useState("");
+  const [busy,setBusy]=useState(false);
+  const [drafts,setDrafts]=useState(null);
+  const [err,setErr]=useState("");
+  const [saving,setSaving]=useState(false);
+
+  async function interpret(){
+    if(!text.trim())return;
+    setBusy(true); setErr(""); setDrafts(null);
+    try {
+      const { items } = await api.parseFood(text);
+      if(!items?.length){ setErr("No identifiqué ningún alimento en esa frase."); return; }
+      // Para cada alimento, buscar macros reales en las bases de datos
+      const resolved = await Promise.all(items.map(async it => {
+        const [u,o] = await Promise.all([searchUSDA(it.nombre), searchOFF(it.nombre)]);
+        const options = [...u, ...o].filter(f=>f.per100?.kcal>0).slice(0,6);
+        return { ...it, options, pickIdx: options.length?0:-1 };
+      }));
+      setDrafts(resolved);
+    } catch(e){ setErr(e.message||"No se pudo interpretar el texto."); }
+    finally { setBusy(false); }
+  }
+
+  function update(i, patch){ setDrafts(d=>d.map((x,idx)=>idx===i?{...x,...patch}:x)); }
+  function remove(i){ setDrafts(d=>d.filter((_,idx)=>idx!==i)); }
+
+  async function saveAll(){
+    const valid = (drafts||[]).filter(d=>d.pickIdx>=0 && d.options[d.pickIdx]);
+    if(!valid.length) return;
+    setSaving(true);
+    try {
+      for (const d of valid) {
+        const f = d.options[d.pickIdx];
+        const m = { date, type:mealType, name:f.name, src:f.src, grams:d.gramos, ...macrosFor(f,d.gramos) };
+        const { id } = await api.addMeal(m);
+        onAdded({...m, id});
+      }
+      setDrafts(null); setText("");
+    } finally { setSaving(false); }
+  }
+
+  return (
+    <div style={{background:T.surface,border:`1px solid ${T.purple}33`,borderRadius:8,padding:10,marginBottom:10}}>
+      <div style={{fontSize:8,letterSpacing:1.5,color:T.purple,textTransform:"uppercase",fontWeight:700,marginBottom:6}}>
+        💬 Escríbelo como lo dirías
+      </div>
+      <div style={{display:"flex",gap:6,marginBottom:6}}>
+        <input value={text} onChange={e=>setText(e.target.value)} onKeyDown={e=>e.key==="Enter"&&interpret()}
+          placeholder="ej: dos huevos, arepa y café con leche"
+          style={{flex:1,background:T.card,border:`1px solid ${T.border}`,borderRadius:6,padding:"8px 10px",color:T.white,fontSize:12,outline:"none",fontFamily:T.font,boxSizing:"border-box"}}/>
+        <button onClick={interpret} disabled={busy||!text.trim()} style={{background:T.purple+"22",border:`1px solid ${T.purple}55`,borderRadius:6,padding:"8px 12px",color:T.purple,fontSize:11,fontWeight:700,cursor:busy?"default":"pointer",whiteSpace:"nowrap"}}>
+          {busy?"…":"Interpretar"}
+        </button>
+      </div>
+      {err&&<div style={{fontSize:9,color:T.amber,marginBottom:6}}>{err}</div>}
+
+      {drafts&&drafts.length>0&&(
+        <div style={{display:"flex",flexDirection:"column",gap:6}}>
+          <div style={{fontSize:9,color:T.muted,lineHeight:1.5}}>
+            Revisa antes de guardar. Los gramos son una estimación de la IA; los macros vienen de USDA/Open Food Facts.
+          </div>
+          {drafts.map((d,i)=>{
+            const f = d.pickIdx>=0 ? d.options[d.pickIdx] : null;
+            const m = f ? macrosFor(f,d.gramos) : null;
+            return (
+              <div key={i} style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:7,padding:"8px 10px"}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:5}}>
+                  <span style={{fontSize:11,fontWeight:700,color:"#fff"}}>{d.nombre}</span>
+                  <button onClick={()=>remove(i)} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:13}}>✕</button>
+                </div>
+                {f ? (
+                  <>
+                    <select value={d.pickIdx} onChange={e=>update(i,{pickIdx:Number(e.target.value)})}
+                      style={{width:"100%",background:T.surface,border:`1px solid ${T.border}`,borderRadius:5,padding:"5px 6px",color:T.white,fontSize:10,outline:"none",fontFamily:T.font,marginBottom:5}}>
+                      {d.options.map((o,oi)=><option key={o.id} value={oi}>{o.src} · {o.name}</option>)}
+                    </select>
+                    <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                      <input type="number" min={1} max={2000} value={d.gramos}
+                        onChange={e=>update(i,{gramos:Math.max(1,Number(e.target.value)||1)})}
+                        style={{width:64,background:T.surface,border:`1px solid ${T.border}`,borderRadius:5,padding:"4px 6px",color:T.white,fontSize:12,fontFamily:T.mono,outline:"none"}}/>
+                      <span style={{fontSize:9,color:T.muted}}>g</span>
+                      <div style={{display:"flex",gap:4,flex:1,justifyContent:"flex-end"}}>
+                        <Pill c={T.amber} sm>{m.kcal} kcal</Pill>
+                        <Pill c={T.blue} sm>P{m.protein}</Pill>
+                        <Pill c={T.green} sm>C{m.carbs}</Pill>
+                        <Pill c={T.pink} sm>G{m.fat}</Pill>
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <div style={{fontSize:9,color:T.amber}}>No encontré este alimento en las bases de datos. Bórralo o búscalo manualmente abajo.</div>
+                )}
+              </div>
+            );
+          })}
+          <button onClick={saveAll} disabled={saving} style={{width:"100%",background:T.green+"22",border:`1px solid ${T.green}55`,borderRadius:7,padding:"9px",color:T.green,fontSize:11,fontWeight:700,textTransform:"uppercase",cursor:saving?"default":"pointer"}}>
+            {saving?"Guardando…":`✓ Guardar ${drafts.filter(d=>d.pickIdx>=0).length} alimento(s)`}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── NUTRITION MODULE ──────────────────────────────────────────────────────────
 function NutritionModule({selDate,targets}) {
   const key=toKey(selDate);
@@ -944,7 +987,7 @@ function NutritionModule({selDate,targets}) {
     setResults(m.slice(0,10)); setBusy(false);
   },[q]);
   useEffect(()=>{const t=setTimeout(()=>{if(q.length>2)search();},500);return()=>clearTimeout(t);},[q,search]);
-  const mFor=(f,g)=>({kcal:Math.round(f.per100.kcal*g/100),protein:Math.round(f.per100.protein*g/100*10)/10,carbs:Math.round(f.per100.carbs*g/100*10)/10,fat:Math.round(f.per100.fat*g/100*10)/10});
+  const mFor=macrosFor;
   async function add(){
     if(!pick)return;
     const m={date:key,type:addTo,name:pick.name,src:pick.src,grams,...mFor(pick,grams)};
@@ -972,6 +1015,8 @@ function NutritionModule({selDate,targets}) {
           <div style={{display:"flex",gap:4,marginBottom:10,flexWrap:"wrap"}}>
             {MEAL_TYPES.map(m=><button key={m.id} onClick={()=>setAddTo(m.id)} style={{background:addTo===m.id?T.green+"22":"none",border:`1px solid ${addTo===m.id?T.green+"55":T.border}`,borderRadius:6,padding:"4px 10px",color:addTo===m.id?T.green:T.muted,fontSize:10,fontWeight:700,cursor:"pointer"}}>{m.icon} {m.l}</button>)}
           </div>
+          <NaturalFoodEntry date={key} mealType={addTo} onAdded={m=>setMeals(ms=>[...ms,m])}/>
+          <div style={{fontSize:8,letterSpacing:1.5,color:T.muted,textTransform:"uppercase",fontWeight:700,marginBottom:6}}>🔍 O búscalo uno por uno</div>
           <div style={{position:"relative",marginBottom:8}}>
             <input value={q} onChange={e=>setQ(e.target.value)} onKeyDown={e=>e.key==="Enter"&&search()}
               placeholder="ej: arroz, pechuga, aguacate…"
@@ -1336,14 +1381,50 @@ function VolBar({week,vol,max,color}) {
   );
 }
 
-function AnalyticsModule({targets,week}) {
+// Capa de redacción: manda las recomendaciones YA CALCULADAS al modelo para que
+// las explique en prosa. Las cifras siguen siendo las de coach.js.
+function CoachNote({recs, profile}) {
+  const [note,setNote]=useState("");
+  const [busy,setBusy]=useState(false);
+  const [err,setErr]=useState("");
+  async function ask(){
+    setBusy(true); setErr("");
+    try { const r = await api.explain(recs, profile); setNote(r.note||""); }
+    catch(e){ setErr(e.message||"No se pudo generar la explicación."); }
+    finally { setBusy(false); }
+  }
+  return (
+    <div style={{marginTop:10}}>
+      {!note&&(
+        <button onClick={ask} disabled={busy} style={{width:"100%",background:T.purple+"18",border:`1px solid ${T.purple}44`,borderRadius:7,padding:"8px",color:T.purple,fontSize:10,fontWeight:700,letterSpacing:1,textTransform:"uppercase",cursor:busy?"default":"pointer"}}>
+          {busy?"Escribiendo…":"💬 Explícamelo en palabras"}
+        </button>
+      )}
+      {note&&(
+        <div style={{background:T.purple+"11",border:`1px solid ${T.purple}33`,borderRadius:8,padding:"10px 12px"}}>
+          <div style={{fontSize:8,letterSpacing:1.5,color:T.purple,textTransform:"uppercase",marginBottom:5,fontWeight:700}}>Lectura del entrenador</div>
+          <div style={{fontSize:10,color:T.white,lineHeight:1.65}}>{note}</div>
+          <div style={{fontSize:8,color:T.muted,marginTop:7,lineHeight:1.5}}>
+            Redactado por IA a partir de las cifras de arriba. Los números salen del cálculo, no del modelo.
+          </div>
+        </div>
+      )}
+      {err&&<div style={{fontSize:9,color:T.muted,marginTop:6,textAlign:"center"}}>{err}</div>}
+    </div>
+  );
+}
+
+function AnalyticsModule({targets,week,profile}) {
   const [logs,setLogs] = useState(null);
   const [meals,setMeals] = useState(null);
-  useEffect(()=>{ scanExerciseLogs().then(setLogs); scanMealLogs().then(setMeals); },[]);
+  const [metrics,setMetrics] = useState(null);
+  useEffect(()=>{ scanExerciseLogs().then(setLogs); scanMealLogs().then(setMeals); scanMetrics().then(setMetrics); },[]);
   const liftDays = useMemo(()=>liftDaysPerWeek(week),[week]);
   const { names, weeks, prs, adherence, sessionsThisWeek } = useMemo(()=>buildAnalytics(logs||{},liftDays),[logs,liftDays]);
-  const recs = useMemo(()=> (logs&&meals) ? buildRecommendations({logs,meals,targets}) : [], [logs,meals,targets]);
-  if (!logs || !meals) return null;
+  const recs = useMemo(()=> (logs&&meals&&metrics)
+    ? buildRecommendations({logs, meals, metrics, targets, profile, muscleMap:MUSCLE_MAP})
+    : [], [logs,meals,metrics,targets,profile]);
+  if (!logs || !meals || !metrics) return null;
 
   const maxVol = Math.max(...weeks.map(([,v])=>v), 1);
 
@@ -1353,13 +1434,14 @@ function AnalyticsModule({targets,week}) {
         <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:10,padding:12,marginBottom:12}}>
           <div style={{fontSize:9,fontWeight:700,letterSpacing:2,color:T.muted,textTransform:"uppercase",marginBottom:9}}>🧠 Recomendaciones</div>
           <div style={{display:"flex",flexDirection:"column",gap:6}}>
-            {recs.map((r,i)=>(
-              <div key={i} style={{background:r.c+"11",border:`1px solid ${r.c}33`,borderRadius:8,padding:"9px 11px"}}>
-                <div style={{fontSize:11,fontWeight:700,color:r.c,marginBottom:3}}>{r.icon} {r.title}</div>
+            {recs.map(r=>{ const rc=TONE_COLOR[r.tone]||T.blue; return (
+              <div key={r.id} style={{background:rc+"11",border:`1px solid ${rc}33`,borderRadius:8,padding:"9px 11px"}}>
+                <div style={{fontSize:11,fontWeight:700,color:rc,marginBottom:3}}>{r.icon} {r.title}</div>
                 <div style={{fontSize:10,color:T.white,lineHeight:1.5}}>{r.detail}</div>
               </div>
-            ))}
+            );})}
           </div>
+          <CoachNote recs={recs} profile={profile}/>
         </div>
       )}
 
@@ -1466,7 +1548,7 @@ function App() {
       {tab==="workout"  &&<WorkoutModule goal={profile.goal} week={profile.week}/>}
       {tab==="nutrition"&&<NutritionModule selDate={nutDate} targets={targets}/>}
       {tab==="progress" &&<ProgressModule profile={profile} setProfile={setProfile}/>}
-      {tab==="analytics"&&<AnalyticsModule targets={targets} week={profile.week}/>}
+      {tab==="analytics"&&<AnalyticsModule targets={targets} week={profile.week} profile={profile}/>}
       {tab==="profile"  &&<ProfileModule profile={profile} setProfile={setProfile}/>}
     </div>
   );
